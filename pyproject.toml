@@ -1,0 +1,13 @@
+[project]
+name = "text-to-sql-coverage"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "networkx>=3.4.2",
+    "openai>=1.60.0",
+    "pandas>=2.2.3",
+    "sqlglot>=26.2.1",
+    "sqlparse>=0.5.3",
+]
