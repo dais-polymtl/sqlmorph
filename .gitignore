@@ -177,4 +177,4 @@ cython_debug/
 *.DS_Store
 
 # Data files
-src/data/
+data/
