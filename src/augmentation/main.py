@@ -13,15 +13,14 @@ from rule_1_and_2.query_generation import generate_inner_join_query_with_test
 from rule_1_and_2.visualization import save_pre_rule_subgraphs
 
 
-def run_rule_1_and_2(db_ids):
-    """
-    Process Rule 1 and Rule 2 for a list of database IDs.
-
-    Args:
-        db_ids (list): List of database identifiers to process.
-    """
+def run_rule_1_and_2():
     # Configuration
     data_folder = 'data/'
+    db_ids = [
+        'california_schools', 'card_games', 'codebase_community', 'debit_card_specializing',
+        'european_football_2', 'financial', 'formula_1', 'student_club', 'superhero',
+        'thrombosis_prediction', 'toxicology'
+    ]
     rule_inputs_base = os.path.join(data_folder, 'rule_inputs', 'rules_1_2')
     graph_data_base = os.path.join(data_folder, 'graph_data', 'bird_graphs', 'pickles')
     rule_outputs_base = os.path.join(data_folder, 'rule_outputs', 'rules_1_2')
@@ -130,9 +129,4 @@ def run_rule_1_and_2(db_ids):
     print("\nAll databases processed successfully.")
 
 if __name__ == "__main__":
-    db_ids = [
-        'california_schools', 'card_games', 'codebase_community',
-        'debit_card_specializing', 'european_football_2', 'financial',
-        'formula_1', 'student_club', 'superhero', 'thrombosis_prediction', 'toxicology'
-    ]
-    run_rule_1_and_2(db_ids)
+    run_rule_1_and_2()
