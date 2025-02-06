@@ -17,7 +17,6 @@ class QueryExecutor:
         """
         raise NotImplementedError("Subclasses should implement this method.")
 
-
 class SQLiteQueryExecutor(QueryExecutor):
     """
     Concrete implementation for SQLite.
@@ -45,7 +44,6 @@ class SQLiteQueryExecutor(QueryExecutor):
 
         return column_names, rows
 
-
 class EmbeddingCalculator:
     """
     Uses an OpenAI client to produce embeddings for row text.
@@ -64,15 +62,10 @@ class EmbeddingCalculator:
         :param dimensions: optional param for OpenAI embeddings
         :param user: optional param for OpenAI embeddings
         """
-        # Read API key from environment variable
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables.")
-
-        # Create the OpenAI client with the given API key
         self.client = OpenAI(api_key=api_key)
-
-        # Store embedding params
         self.model_name = model_name
         self.encoding_format = encoding_format
         self.dimensions = dimensions
@@ -87,7 +80,6 @@ class EmbeddingCalculator:
             "model": self.model_name,
             "input": [text],
         }
-        # Add optional params if they are not None
         optional_params = {
             "encoding_format": self.encoding_format,
             "dimensions": self.dimensions,
@@ -99,13 +91,11 @@ class EmbeddingCalculator:
 
         try:
             response = self.client.embeddings.create(**payload)
-            # Use object notation:
             embedding = response.data[0].embedding
             return np.array(embedding, dtype=np.float32)
         except Exception as e:
             print(f"[ERROR] Failed to get embedding for text: '{text}'\n{e}")
-            # Fallback: return a zero vector if there's an error
-            return np.zeros(1536, dtype=np.float32)  # typical dimension for e.g. text-embedding-ada-002
+            return np.zeros(1536, dtype=np.float32)
 
     def embed_rows(self, row_strings) -> np.ndarray:
         """
@@ -122,7 +112,6 @@ class EmbeddingCalculator:
         else:
             return np.vstack(embeddings)
 
-
 class BipartiteMatcher:
     """
     Performs bipartite matching (Hungarian algorithm) on a similarity matrix.
@@ -133,18 +122,14 @@ class BipartiteMatcher:
         that maximizes total similarity.
 
         Returns:
-          matched_pairs: list of (pred_idx, gt_idx) for pairs above 'threshold'
+          matched_pairs: list of (pred_idx, gt_idx) for pairs with similarity >= threshold
           unmatched_pred_indices: set of predicted row indices not matched
           unmatched_gt_indices: set of ground-truth row indices not matched
         """
-
         if similarity_matrix.size == 0:
-            # Edge case: empty => no matches
             return [], set(), set()
 
-        # Convert similarity to cost: cost = -similarity
         cost_matrix = -similarity_matrix
-
         pred_indices, gt_indices = linear_sum_assignment(cost_matrix)
 
         matched_pairs = []
@@ -153,25 +138,26 @@ class BipartiteMatcher:
             if sim >= threshold:
                 matched_pairs.append((p, g))
 
-        # Identify unmatched
         all_pred = set(range(similarity_matrix.shape[0]))
         all_gt = set(range(similarity_matrix.shape[1]))
         matched_pred = set(p for p, _ in matched_pairs)
         matched_gt = set(g for _, g in matched_pairs)
-
         unmatched_pred_indices = all_pred - matched_pred
         unmatched_gt_indices = all_gt - matched_gt
 
         return matched_pairs, unmatched_pred_indices, unmatched_gt_indices
-
 
 class SQLResultEvaluator:
     """
     Evaluates predicted vs ground-truth SQL queries at the row level,
     penalizing missing/extra columns by including them in the row representation
     with placeholders ("N/A").
-    """
 
+    The final metrics are:
+      - EXP (execution precision): sum of matched similarities / (# predicted rows)
+      - EXR (execution recall): sum of matched similarities / (# ground-truth rows)
+      - EX (binary execution accuracy): 1 if the predicted result set exactly equals the ground truth (ignoring order), else 0.
+    """
     def __init__(
         self,
         query_executor: QueryExecutor,
@@ -182,138 +168,144 @@ class SQLResultEvaluator:
         self.embedding_calculator = embedding_calculator
         self.matcher = matcher
 
-    def evaluate(
-        self,
-        predicted_sql: str,
-        ground_truth_sql: str,
-        threshold: float = 0.8
-    ):
-        """
-        Execute both queries, compute row-level similarity + bipartite matching,
-        then compute precision/recall using the specified threshold.
+    def _build_row_strings(self, cols, rows, all_cols):
+        """Helper method to build a list of row strings based on the union of columns."""
+        row_strings = []
+        for row in rows:
+            row_dict = {c: v for c, v in zip(cols, row)}
+            final_values = []
+            for col in all_cols:
+                if col in row_dict:
+                    final_values.append(str(row_dict[col]))
+                else:
+                    final_values.append("N/A")
+            row_strings.append(" | ".join(final_values))
+        return row_strings
 
-        We penalize extra/missing columns by building row strings that include
-        placeholders for columns not present in that query's result.
+    def evaluate(self, predicted_sql: str, ground_truth_sql: str, threshold: float = 0.8):
         """
-
-        # 1. Execute predicted and ground-truth queries
+        Execute both queries, compute row-level similarity via embeddings and bipartite matching,
+        and return the following metrics in a single result:
+          - EXP: execution precision = (sum of matched similarities) / (# predicted rows)
+          - EXR: execution recall = (sum of matched similarities) / (# ground-truth rows)
+          - EX: binary execution accuracy: 1 if the predicted and ground-truth result sets are exactly equal (ignoring order), otherwise 0.
+        Also returns additional matching details.
+        """
+        # 1. Execute queries
         pred_cols, pred_rows = self.query_executor.execute_query(predicted_sql)
         gt_cols, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-
-        # 2. Collect ALL columns to handle missing/extra
         all_cols = sorted(set(pred_cols).union(set(gt_cols)))
 
-        # 3. Build row strings for predicted with placeholders
-        pred_col_to_idx = {col: i for i, col in enumerate(pred_cols)}
-        predicted_row_strings = []
-        for row in pred_rows:
-            row_dict = {}
-            for c, val in zip(pred_cols, row):
-                row_dict[c] = val
+        # 2. Build row strings for both predicted and ground truth
+        predicted_row_strings = self._build_row_strings(pred_cols, pred_rows, all_cols)
+        gt_row_strings = self._build_row_strings(gt_cols, gt_rows, all_cols)
 
-            final_values = []
-            for col in all_cols:
-                if col in row_dict:
-                    final_values.append(str(row_dict[col]))
-                else:
-                    final_values.append("N/A")
+        # 3. Compute binary execution accuracy (EX)
+        #    Sort the row strings (order-insensitive comparison)
+        ex = 1 if sorted(predicted_row_strings) == sorted(gt_row_strings) else 0
 
-            predicted_row_strings.append(" | ".join(final_values))
-
-        # 4. Build row strings for ground truth with placeholders
-        gt_col_to_idx = {col: i for i, col in enumerate(gt_cols)}
-        gt_row_strings = []
-        for row in gt_rows:
-            row_dict = {}
-            for c, val in zip(gt_cols, row):
-                row_dict[c] = val
-
-            final_values = []
-            for col in all_cols:
-                if col in row_dict:
-                    final_values.append(str(row_dict[col]))
-                else:
-                    final_values.append("N/A")
-
-            gt_row_strings.append(" | ".join(final_values))
-
-        # 5. Handle edge cases
+        # 4. Handle edge cases for graded metrics
         P = len(pred_rows)
         G = len(gt_rows)
         if P == 0 and G == 0:
-            # both empty => perfect match
             return {
-                "precision": 1.0,
-                "recall": 1.0,
+                "EXP": 1.0,
+                "EXR": 1.0,
+                "EX": ex,
+                "sum_matched_sim": 0.0,
                 "matched_pairs": [],
                 "unmatched_pred": [],
                 "unmatched_gt": []
             }
         elif P == 0:
-            # predicted empty but ground-truth not => 0
             return {
-                "precision": 0.0,
-                "recall": 0.0,
+                "EXP": 0.0,
+                "EXR": 0.0,
+                "EX": ex,
+                "sum_matched_sim": 0.0,
                 "matched_pairs": [],
                 "unmatched_pred": [],
                 "unmatched_gt": list(range(G))
             }
         elif G == 0:
-            # ground-truth empty but predicted not => 0
             return {
-                "precision": 0.0,
-                "recall": 0.0,
+                "EXP": 0.0,
+                "EXR": 0.0,
+                "EX": ex,
+                "sum_matched_sim": 0.0,
                 "matched_pairs": [],
                 "unmatched_pred": list(range(P)),
                 "unmatched_gt": []
             }
 
-        # 6. Embed row strings
+        # 5. Embed row strings
         pred_embeddings = self.embedding_calculator.embed_rows(predicted_row_strings)
         gt_embeddings = self.embedding_calculator.embed_rows(gt_row_strings)
 
-        # 7. Compute similarity matrix (P x G) with cosine similarity
+        # 6. Compute similarity matrix (P x G) using cosine similarity
         pred_norms = np.linalg.norm(pred_embeddings, axis=1, keepdims=True) + 1e-8
         gt_norms = np.linalg.norm(gt_embeddings, axis=1, keepdims=True) + 1e-8
         similarity_matrix = (pred_embeddings @ gt_embeddings.T) / (pred_norms * gt_norms.T)
 
-        # 8. Perform bipartite matching
-        matched_pairs, unmatched_pred, unmatched_gt = self.matcher.match(
-            similarity_matrix, threshold=threshold
-        )
+        # 7. Override similarity to 1.0 if the row strings are exactly identical
+        for p in range(P):
+            for g in range(G):
+                if predicted_row_strings[p] == gt_row_strings[g]:
+                    similarity_matrix[p, g] = 1.0
 
-        # 9. Precision & Recall
-        precision = len(matched_pairs) / P
-        recall = len(matched_pairs) / G
+        # 8. Perform bipartite matching
+        matched_pairs, unmatched_pred, unmatched_gt = self.matcher.match(similarity_matrix, threshold=threshold)
+
+        # 9. Sum the similarity of matched pairs
+        sum_matched_sim = 0.0
+        for p_idx, g_idx in matched_pairs:
+            sum_matched_sim += similarity_matrix[p_idx, g_idx]
+
+        # 10. Calculate graded metrics: EXP and EXR
+        EXP = sum_matched_sim / P
+        EXR = sum_matched_sim / G
 
         return {
-            "precision": precision,
-            "recall": recall,
+            "EXP": EXP,
+            "EXR": EXR,
+            "EX": ex,
+            "sum_matched_sim": sum_matched_sim,
             "matched_pairs": matched_pairs,
             "unmatched_pred": list(unmatched_pred),
             "unmatched_gt": list(unmatched_gt),
         }
 
-
 if __name__ == "__main__":
-    # Ensure OPENAI_API_KEY is set in your environment before running
+    # Example usage
 
-    db_path = "california_schools.sqlite"
-
+    db_path = "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"
     executor = SQLiteQueryExecutor(db_path)
     embed_calc = EmbeddingCalculator(model_name="text-embedding-ada-002")
     matcher = BipartiteMatcher()
     evaluator = SQLResultEvaluator(executor, embed_calc, matcher)
 
-    # Example queries
-    predicted_sql = "SELECT T3.Phone FROM satscores T1 JOIN schools T3 ON T1.cds = T3.CDSCode WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC LIMIT 3;"
-    ground_truth_sql = "SELECT T1.Phone FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC LIMIT 3;"
+    predicted_sql = """
+    SELECT T3.Phone
+    FROM satscores T1 
+    JOIN schools T3 ON T1.cds = T3.CDSCode 
+    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
+    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
+    LIMIT 10;
+    """
+    ground_truth_sql = """
+    SELECT T1.Phone
+    FROM schools AS T1 
+    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
+    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
+    LIMIT 3;
+    """
 
-    # Evaluate
-    results = evaluator.evaluate(predicted_sql, ground_truth_sql, threshold=0.5)
+    results = evaluator.evaluate(predicted_sql, ground_truth_sql, threshold=0.8)
 
-    print("Precision:", results["precision"])
-    print("Recall:", results["recall"])
+    print("EXP (Execution Precision):", results["EXP"])
+    print("EXR (Execution Recall):", results["EXR"])
+    print("EX (Binary Execution Accuracy):", results["EX"])
+    print("Sum of Matched Similarities:", results["sum_matched_sim"])
     print("Matched Pairs:", results["matched_pairs"])
     print("Unmatched Predicted:", results["unmatched_pred"])
     print("Unmatched GroundTruth:", results["unmatched_gt"])
