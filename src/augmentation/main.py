@@ -8,7 +8,7 @@ from rule_1_and_2 import (
     ensure_directory
 )
 from rule_1_and_2.persistence import save_rule_data, process_rule_folder
-from rule_1_and_2.query_execution import process_queries_for_rules
+from rule_1_and_2.query_execution import process_queries_for_rules, filter_valid_queries
 from rule_1_and_2.query_generation import generate_inner_join_query_with_test
 from rule_1_and_2.visualization import save_pre_rule_subgraphs
 
@@ -86,6 +86,11 @@ def run_rule_1_and_2():
 
         for pattern in rule_1_patterns:
             result = generate_inner_join_query_with_test(schema, pattern, db_id, df)
+            if db_id == 'financial':
+                if 'order' in result['main_query']:
+                    result['main_query'] = result['main_query'].replace('order', "'order'")
+                    result['test_query'] = result['test_query'].replace('order', "'order'")
+
             rule_1_data.append({
                 'subgraph': pattern,
                 'main_query': result['main_query'],
@@ -96,6 +101,11 @@ def run_rule_1_and_2():
 
         for pattern in rule_2_patterns:
             result = generate_inner_join_query_with_test(schema, pattern, db_id, df)
+            if db_id == 'financial':
+                if 'order' in result['main_query']:
+                    result['main_query'] = result['main_query'].replace('order', "'order'")
+                    result['test_query'] = result['test_query'].replace('order', "'order'")
+            
             rule_2_data.append({
                 'subgraph': pattern,
                 'main_query': result['main_query'],
@@ -113,6 +123,9 @@ def run_rule_1_and_2():
         process_queries_for_rules(rule_1_data, db_id, database_path_template)
         process_queries_for_rules(rule_2_data, db_id, database_path_template)
 
+        rule_1_data = filter_valid_queries(rule_1_data, database_path_template)
+        rule_2_data = filter_valid_queries(rule_2_data, database_path_template)
+
         # Save outputs
         save_rule_data(rule_1_data, 'rule_1', rule_outputs_folder, db_id)
         save_rule_data(rule_2_data, 'rule_2', rule_outputs_folder, db_id)
@@ -120,11 +133,12 @@ def run_rule_1_and_2():
 
     # Global ordering and final output generation for all databases
     for rule_name in ['rule_1', 'rule_2']:
-        print(f"\nProcessing Global Outputs for {rule_name}...")
-        json_output = os.path.join(rule_outputs_base, f'dev_{rule_name.split("_")[1]}_1.json')
-        sql_output = os.path.join(rule_outputs_base, f'dev_{rule_name.split("_")[1]}_1.sql')
-        process_rule_folder(rule_outputs_folder, graph_data_base, rule_name, json_output, sql_output)
-        print(f"Files {os.path.basename(json_output)} and {os.path.basename(sql_output)} generated successfully for {rule_name}.")
+        for question_type in ['explicit', 'dev_set_like']:
+            print(f"\nProcessing Global Outputs for {rule_name} with {question_type} questions...")
+            json_output = os.path.join(rule_outputs_base, f'dev_{rule_name.split("_")[1]}_{question_type}.json')
+            sql_output = os.path.join(rule_outputs_base, f'dev_{rule_name.split("_")[1]}_{question_type}.sql')
+            process_rule_folder(rule_outputs_folder, graph_data_base, rule_name, json_output, sql_output, question_type)
+            print(f"Files {os.path.basename(json_output)} and {os.path.basename(sql_output)} generated successfully for {rule_name}.")
 
     print("\nAll databases processed successfully.")
 

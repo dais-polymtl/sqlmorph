@@ -14,7 +14,9 @@ def vacuum_database(conn):
         cursor.close()  # Close the cursor but keep the connection open
 
 
-def execute_test_query_and_replace_placeholders(conn, test_query, main_query, filtering_columns):
+def execute_test_query_and_replace_placeholders(
+    conn, test_query, main_query, filtering_columns
+):
     """
     Execute a test query and replace placeholders in the main query with actual filtering values.
     """
@@ -36,9 +38,9 @@ def execute_test_query_and_replace_placeholders(conn, test_query, main_query, fi
                 max_count = count_value
                 # Extract filtering values based on the number of filtering columns
                 if filtering_columns:
-                    max_values = row[-(len(filtering_columns) + 1):-1]
+                    max_values = row[-(len(filtering_columns) + 1) : -1]
                 else:
-                    max_values = row[:-(len(filtering_columns) + 1)]
+                    max_values = row[: -(len(filtering_columns) + 1)]
 
         # If no result is found, return the main query unchanged
         if max_values is None:
@@ -47,7 +49,9 @@ def execute_test_query_and_replace_placeholders(conn, test_query, main_query, fi
 
         # Replace placeholders in the main query with actual values
         for value in max_values:
-            main_query = main_query.replace('?', f"'{value}'", 1)  # Replace one placeholder at a time
+            main_query = main_query.replace(
+                "?", f"'{value}'", 1
+            )  # Replace one placeholder at a time
 
     except sqlite3.OperationalError as e:
         print(f"SQLite OperationalError: {e}")
@@ -97,9 +101,9 @@ def process_queries_for_rules(rule_data, db_id, database_path):
         print(f"Processing subgraph {i}...")
 
         # Check for None values in necessary fields before processing
-        test_query = result.get('test_query')
-        main_query = result.get('main_query')
-        filtering_columns = result.get('filtering_columns')
+        test_query = result.get("test_query")
+        main_query = result.get("main_query")
+        filtering_columns = result.get("filtering_columns")
 
         # If any of the required fields are None, skip the processing for this result
         if test_query is None or main_query is None or filtering_columns is None:
@@ -112,9 +116,41 @@ def process_queries_for_rules(rule_data, db_id, database_path):
             vacuum_database(conn)
 
             # Execute the test query and replace placeholders in the main query
-            final_query = execute_test_query_and_replace_placeholders(conn, test_query, main_query, filtering_columns)
+            final_query = execute_test_query_and_replace_placeholders(
+                conn, test_query, main_query, filtering_columns
+            )
 
         # Update the rule data with the final query (in-place update)
-        result['main_query'] = final_query
+        result["main_query"] = final_query
 
         print(f"Updated main_query for Subgraph {i}:\n{final_query}\n")
+
+
+def filter_valid_queries(rule_data, db_file):
+    """
+    Filters the given rule data to keep only valid queries.
+
+    Parameters:
+    - rule_data: List of dictionaries containing query information.
+    - db_file: Path to the SQLite database file.
+
+    Returns:
+    - List of dictionaries with valid queries.
+    """
+    valid_data = []
+
+    if any(element["main_query"] == None for element in rule_data):
+        print(f"Total Queries: {0}")
+    else:
+        print(f"Total Queries: {len(rule_data)}")
+    for element in rule_data:
+        if element["main_query"] == None:
+            return rule_data
+
+        else:
+            # Execute the query and check if it returns results
+            result_df = execute_query(db_file, element["main_query"])
+            if not result_df.empty:  # Check if the query returned results
+                print("Query executed successfully!")
+                valid_data.append(element)
+    return valid_data
