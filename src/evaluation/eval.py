@@ -47,7 +47,6 @@ class SQLiteQueryExecutor(QueryExecutor):
 class EmbeddingCalculator:
     """
     Uses an OpenAI client to produce embeddings for row text.
-    This version uses `response.data[0].embedding` rather than dictionary indexing.
     """
     def __init__(
         self,
@@ -73,8 +72,7 @@ class EmbeddingCalculator:
 
     def get_text_embedding(self, text: str) -> np.ndarray:
         """
-        Call OpenAI Embeddings API in 'new style', building a payload with optional params.
-        Returns a NumPy vector of floats for the embedding, using response.data[0].embedding.
+        Returns a NumPy vector of floats for the embedding.
         """
         payload = {
             "model": self.model_name,
