@@ -188,7 +188,7 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
             condition = condition.split(';')[0]  # Use only the first part if there are multiple
         left_table, left_col = condition.split('=')[0].strip().split('.')
         right_table, right_col = condition.split('=')[1].strip().split('.')
-        test_where_conditions.append(f"{left_table}.{left_col} = {right_col}")
+        test_where_conditions.append(f"{left_table}.{left_col} = {right_table}.{right_col}")
 
     # Construct the test query
     test_query = f"""

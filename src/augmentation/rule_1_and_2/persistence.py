@@ -2,6 +2,7 @@ import os
 import pickle
 import json
 
+from .llm_inference import generate_explicit_question, generate_dev_set_like_question
 
 def save_rule_data(rule_data, rule, folder, db_id):
     """
@@ -21,7 +22,7 @@ def save_rule_data(rule_data, rule, folder, db_id):
         pickle.dump(rule_data, f)
 
 
-def process_rule_folder(rule_folder, graph_data_folder, rule_name, json_output_file, sql_output_file):
+def process_rule_folder(rule_folder, graph_data_folder, rule_name, json_output_file, sql_output_file, question_type):
     """
     Process and compute metrics for all databases in a rule folder.
 
@@ -31,6 +32,7 @@ def process_rule_folder(rule_folder, graph_data_folder, rule_name, json_output_f
         rule_name (str): Name of the rule ('rule_1' or 'rule_2').
         json_output_file (str): Path to save the JSON output.
         sql_output_file (str): Path to save the SQL output.
+        question_type (str): Type of question to generate ('explicit' or 'dev_set_like').
     """
     import networkx as nx  # Imported here to avoid circular dependencies
     from .graph_processing import calculate_subgraph_centrality, is_cyclic
@@ -99,10 +101,14 @@ def process_rule_folder(rule_folder, graph_data_folder, rule_name, json_output_f
     sql_queries = []
 
     for idx, entry in enumerate(global_rule_data_sorted):
+        if question_type == 'explicit':
+            question = generate_explicit_question(entry['main_query'])
+        if question_type == 'dev_set_like':
+            question = generate_dev_set_like_question(entry['main_query'])
         json_data.append({
             "question_id": idx,
             "db_id": entry['db_id'],
-            "question": "",  # Placeholder
+            "question": question,  # Placeholder
             "evidence": "",  # Placeholder
             "SQL": entry['main_query'],
             "difficulty": "challenging"  # Default difficulty
