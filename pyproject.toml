@@ -10,6 +10,7 @@ dependencies = [
     "notebook>=7.3.2",
     "openai>=1.60.0",
     "pandas>=2.2.3",
+    "python-dotenv>=1.0.1",
     "scipy>=1.15.1",
     "sqlglot>=26.2.1",
     "sqlparse>=0.5.3",
