@@ -50,17 +50,30 @@ def generate_subgraphs(db_graph: nx.Graph, num_nodes: int) -> List[nx.Graph]:
     Generate all possible connected subgraphs of `db_graph` with `num_nodes` nodes.
 
     Args:
-        db_graph (networkx.Graph): The input graph.
-        num_nodes (int): Number of nodes in the subgraphs.
+        db_graph (nx.Graph): The input graph.
+        num_nodes (int): The number of nodes in each subgraph.
 
     Returns:
-        list: A list of connected subgraphs.
+        List[nx.Graph]: A list of connected subgraphs, each represented as a NetworkX graph.
     """
-    return [
-        db_graph.subgraph(nodes).copy()
-        for nodes in combinations(db_graph.nodes, num_nodes)
-        if db_graph.subgraph(nodes).number_of_edges() > 0  # Only connected subgraphs
-    ]
+    all_subgraphs = []
+
+    for nodes in combinations(db_graph.nodes, num_nodes):
+        original_subgraph = db_graph.subgraph(nodes).copy()
+        edges = list(original_subgraph.edges)
+
+        for k in range(
+            num_nodes - 1, len(edges) + 1
+        ):  # Au moins num_nodes - 1 arêtes pour connexion
+            for selected_edges in combinations(edges, k):
+                new_subgraph = nx.Graph()
+                new_subgraph.add_nodes_from(nodes)
+                new_subgraph.add_edges_from(selected_edges)
+
+                if nx.is_connected(new_subgraph):
+                    all_subgraphs.append(new_subgraph.copy())
+
+    return all_subgraphs
 
 
 def count_pattern_instances(db_graph: nx.Graph, pattern: nx.Graph) -> int:
@@ -143,3 +156,16 @@ def save_results(results: List[List], output_filename: str) -> None:
         writer = csv.writer(csv_file)
         writer.writerow(["db_id", "num_vertices", "matched_pattern", "num_instances"])
         writer.writerows(results)
+
+
+def main() -> None:
+    pattern_dir = ""
+    graph_dir = ""
+    output_file = ""
+    results = process(graph_dir=graph_dir, pattern_dir=pattern_dir)
+    save_results(results, output_file=output_file)
+    logging.info(f"Results saved to {output_file}")
+
+
+if __name__ == "__main__":
+    main()
