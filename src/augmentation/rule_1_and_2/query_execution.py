@@ -1,6 +1,6 @@
 import sqlite3
 import pandas as pd
-
+import re
 
 def vacuum_database(conn):
     """Vacuum the SQLite database to optimize performance."""
@@ -19,6 +19,7 @@ def execute_test_query_and_replace_placeholders(
 ):
     """
     Execute a test query and replace placeholders in the main query with actual filtering values.
+    Guarantees that no `None` values are used to replace placeholders.
     """
     cursor = conn.cursor()
     try:
@@ -27,24 +28,31 @@ def execute_test_query_and_replace_placeholders(
         print("test_query:", test_query)
         cursor.execute(test_query)
 
-        # Fetch all results to determine the maximum COUNT(*) and corresponding filtering values
+        # Fetch all results
         results = cursor.fetchall()
-        max_count = 0
-        max_values = None
 
+        # Sort rows by COUNT(*) (last column) in descending order
+        results.sort(key=lambda row: row[-1], reverse=True)
+
+        # Now find the first row with valid (non-None) filtering values
+        max_values = None
         for row in results:
             count_value = row[-1]  # The last column is COUNT(*)
-            if count_value > max_count:
-                max_count = count_value
-                # Extract filtering values based on the number of filtering columns
-                if filtering_columns:
-                    max_values = row[-(len(filtering_columns) + 1) : -1]
-                else:
-                    max_values = row[: -(len(filtering_columns) + 1)]
+            if filtering_columns:
+                potential_values = row[-(len(filtering_columns) + 1) : -1]
+            else:
+                potential_values = row[: -(len(filtering_columns) + 1)]
 
-        # If no result is found, return the main query unchanged
+            # Check if all values are valid (not None)
+            if all(value is not None for value in potential_values):
+                max_values = potential_values
+                break
+
+        # If no valid result is found, return the main query unchanged
         if max_values is None:
-            print(f"No results found for test query. Returning original main query.")
+            print(
+                f"No valid results found for test query. Returning original main query."
+            )
             return main_query
 
         # Replace placeholders in the main query with actual values
@@ -148,8 +156,19 @@ def filter_valid_queries(rule_data, db_file):
             return rule_data
 
         else:
+            if "'Teferi's Protection'" in element["main_query"]:
+                element["main_query"] = element["main_query"].replace(
+                    "'Teferi's Protection'", "'Teferi''s Protection'"
+                )
+            if "Ancestor's Chosen" in element["main_query"]:
+                element["main_query"] = element["main_query"].replace(
+                    "Ancestor's Chosen", "Ancestor''s Chosen"
+                )
             # Execute the query and check if it returns results
             result_df = execute_query(db_file, element["main_query"])
+            if result_df.empty:
+                print("Query did not return any results. Skipping...")
+                print(f"Main Query: {element['main_query']}")
             if not result_df.empty:  # Check if the query returned results
                 print("Query executed successfully!")
                 valid_data.append(element)

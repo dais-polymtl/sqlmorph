@@ -119,6 +119,10 @@ def process_json_file(
         main_graph = load_main_graph(graphs_dir, db_id)
 
         if "Tables" in pattern and len(pattern["Tables"]) == 1:
+            # if db_id != "dw":
+            #     table_name = pattern["Tables"][0]["table_name"].lower()
+            # elif db_id == "dw":
+            #     table_name = pattern["Tables"][0]["table_name"].upper()
             table_name = pattern["Tables"][0]["table_name"]
             subgraph = nx.Graph()
             subgraph.add_node(table_name)
@@ -168,6 +172,8 @@ def process_json_file(
             edges_to_include = set()
 
             for relation in join_relations:
+                # if db_id != "dw":
+                #     relation = relation.lower()
                 left_col, right_col = relation.split("=")
                 left_col, right_col = left_col.strip(), right_col.strip()
                 table_names.update([x.split(".")[0] for x in [left_col, right_col]])
@@ -191,6 +197,11 @@ def process_json_file(
 
             num_tables = len(subgraph_nodes)
             pattern_count_by_table.setdefault(db_id, {}).setdefault(num_tables, 0)
+
+            if num_tables == 0:
+                print("No tables found in the subgraph")
+                print(pattern)
+                break
 
             db_id_output_dir = Path(output_dir) / db_id
             images_dir = db_id_output_dir / "images"
@@ -260,3 +271,22 @@ def run(patterns_dir: str, graphs_dir: str, output_dir: str) -> None:
         for num_tables, count in table_counts.items():
             logging.info(f"  Unique patterns with {num_tables} tables: {count}")
         logging.info(f"  Total queries processed: {query_count_by_db[db_id]}")
+
+def main():
+    """
+    Main entry point of the script.
+    Sets up the necessary directories and starts processing the data.
+    """
+    # Define paths to the required directories
+    patterns_dir = "bird_essay_data"  # Replace with the actual path to the patterns directory
+    graphs_dir = "bird_graphs/pickles/"     # Replace with the actual path to the graphs directory
+    output_dir = "essay_bird_subgraphs/"     # Replace with the actual path to the output directory
+
+    # Ensure the directories exist
+    create_directories(output_dir)
+
+    # Start processing the patterns
+    run(patterns_dir, graphs_dir, output_dir)
+
+if __name__ == "__main__":
+    main()

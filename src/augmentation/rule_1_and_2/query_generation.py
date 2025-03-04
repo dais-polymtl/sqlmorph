@@ -2,6 +2,7 @@ import pandas as pd
 import sqlglot
 from sqlglot import expressions as exp
 import networkx as nx
+import sqlite3
 
 
 def get_table_data(schema, node_name):
@@ -17,7 +18,7 @@ def get_table_data(schema, node_name):
     """
     if node_name in schema.nodes:
         data = schema.nodes[node_name]
-        return data['table_name'], data['column_names'], data['column_types']
+        return data["table_name"], data["column_names"], data["column_types"]
     return None, [], []
 
 
@@ -35,8 +36,8 @@ def retrieve_projection_filter_columns(db_id, df, tables_involved):
         filtering_columns_with_tables: List of tuples (table_name, filtering_column) for the top w filtering columns.
     """
     # Step 1: Retrieve avg_projections_per_query (p) and avg_conditions_per_query (w)
-    avg_projection = df.loc[df['db_id'] == db_id, 'avg_projections_per_query'].values[0]
-    avg_conditions = df.loc[df['db_id'] == db_id, 'avg_conditions_per_query'].values[0]
+    avg_projection = df.loc[df["db_id"] == db_id, "avg_projections_per_query"].values[0]
+    avg_conditions = df.loc[df["db_id"] == db_id, "avg_conditions_per_query"].values[0]
 
     p = int(avg_projection)  # Number of projection columns to include
     w = int(avg_conditions)  # Number of filtering columns to include
@@ -44,35 +45,58 @@ def retrieve_projection_filter_columns(db_id, df, tables_involved):
 
     # Step 2: Filter rows where table_name is in tables_involved
     tables_involved = [table.lower() for table in tables_involved]
-    involved_tables_df = df[(df['db_id'] == db_id) & (df['table_name'].isin(tables_involved))].copy()
+    involved_tables_df = df[
+        (df["db_id"] == db_id) & (df["table_name"].isin(tables_involved))
+    ].copy()
 
     # Step 3: Handle NaN values and split occurrence strings
-    involved_tables_df['projection_occurrences'] = involved_tables_df['projection_occurrences'].fillna('0/1')
-    involved_tables_df['projection_occurrences'] = involved_tables_df['projection_occurrences'].str.split('/').str[
-        0].astype(int)
+    involved_tables_df["projection_occurrences"] = involved_tables_df[
+        "projection_occurrences"
+    ].fillna("0/1")
+    involved_tables_df["projection_occurrences"] = (
+        involved_tables_df["projection_occurrences"].str.split("/").str[0].astype(int)
+    )
 
     # Step 4: Select the top p projection columns based on projection_occurrences
-    top_projection_columns_df = involved_tables_df.sort_values(by='projection_occurrences', ascending=False).head(p)
+    top_projection_columns_df = involved_tables_df.sort_values(
+        by="projection_occurrences", ascending=False
+    ).head(p)
     # Get the projection columns with their corresponding tables
     projection_columns_with_tables = list(
-        top_projection_columns_df[['table_name', 'projection_column']].itertuples(index=False, name=None))
+        top_projection_columns_df[["table_name", "projection_column"]].itertuples(
+            index=False, name=None
+        )
+    )
 
     # Step 5: Handle filtering columns while excluding those in the projection columns
-    if 'filtering_column' in involved_tables_df.columns:
-        involved_tables_df['filtering_occurrences'] = involved_tables_df['filtering_occurrences'].fillna('0/1')
-        involved_tables_df['filtering_occurrences'] = involved_tables_df['filtering_occurrences'].str.split('/').str[
-            0].astype(int)
+    if "filtering_column" in involved_tables_df.columns:
+        involved_tables_df["filtering_occurrences"] = involved_tables_df[
+            "filtering_occurrences"
+        ].fillna("0/1")
+        involved_tables_df["filtering_occurrences"] = (
+            involved_tables_df["filtering_occurrences"]
+            .str.split("/")
+            .str[0]
+            .astype(int)
+        )
 
         # Exclude columns that are in the projection from filtering columns
         projection_columns = set(
-            col[1] for col in projection_columns_with_tables)  # Get the names of projection columns
-        filtering_candidates_df = involved_tables_df[~involved_tables_df['filtering_column'].isin(projection_columns)]
+            col[1] for col in projection_columns_with_tables
+        )  # Get the names of projection columns
+        filtering_candidates_df = involved_tables_df[
+            ~involved_tables_df["filtering_column"].isin(projection_columns)
+        ]
 
         # Select the top w filtering columns based on filtering_occurrences
-        top_filtering_columns_df = filtering_candidates_df.sort_values(by='filtering_occurrences',
-                                                                       ascending=False).head(w)
+        top_filtering_columns_df = filtering_candidates_df.sort_values(
+            by="filtering_occurrences", ascending=False
+        ).head(w)
         filtering_columns_with_tables = list(
-            top_filtering_columns_df[['table_name', 'filtering_column']].itertuples(index=False, name=None))
+            top_filtering_columns_df[["table_name", "filtering_column"]].itertuples(
+                index=False, name=None
+            )
+        )
     else:
         filtering_columns_with_tables = []
 
@@ -84,7 +108,9 @@ def calculate_subgraph_centrality(subgraph, centrality_dict):
     Calculate the average centrality for a given subgraph.
     """
     subgraph_nodes = list(subgraph.nodes())
-    return sum(centrality_dict.get(node, 0) for node in subgraph_nodes) / len(subgraph_nodes)
+    return sum(centrality_dict.get(node, 0) for node in subgraph_nodes) / len(
+        subgraph_nodes
+    )
 
 
 def is_cyclic(subgraph):
@@ -123,26 +149,32 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
     # Collect join conditions from the edges of the subgraph
     for edge in pattern.edges(data=True):
         left_table, right_table, edge_data = edge
-        if 'label' in edge_data:
-            join_condition = edge_data.get('label')
+        if "label" in edge_data:
+            join_condition = edge_data.get("label")
         else:
-            join_condition = schema.edges[(left_table, right_table)].get('label')
+            join_condition = schema.edges[(left_table, right_table)].get("label")
         join_conditions.append((left_table, right_table, join_condition))
 
     # Get the tables involved in the current query
     tables_involved = list(tables)
 
     # Retrieve projection and filtering columns based on the db_id and involved tables
-    projection_columns_with_tables, filtering_columns_with_tables = retrieve_projection_filter_columns(db_id, df,
-                                                                                                       tables_involved)
+    projection_columns_with_tables, filtering_columns_with_tables = (
+        retrieve_projection_filter_columns(db_id, df, tables_involved)
+    )
     # Construct the SELECT columns for the main query
-    select_columns = [exp.Column(this=col, table=table) for table, col in projection_columns_with_tables]
+    select_columns = [
+        exp.Column(this=col, table=table)
+        for table, col in projection_columns_with_tables
+    ]
 
     # Initialize the base query
-    base_query = sqlglot.select(*select_columns).distinct()  # Add DISTINCT to the main query
+    base_query = sqlglot.select(
+        *select_columns
+    ).distinct()  # Add DISTINCT to the main query
 
     # Construct the FROM clause with all involved tables
-    from_clause = ', '.join(tables_involved)
+    from_clause = ", ".join(tables_involved)
     base_query = base_query.from_(from_clause)
 
     # Prepare WHERE conditions, starting with join conditions
@@ -150,58 +182,70 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
 
     # Add join conditions to WHERE
     for _, _, condition in join_conditions:
-        if len(condition.split(';')) > 1:
-            condition = condition.split(';')[0]
-        left_col = condition.split('=')[0].strip().split('.')[1]
-        left_table = condition.split('=')[0].strip().split('.')[0]
-        right_col = condition.split('=')[1].strip().split('.')[1]
-        right_table = condition.split('=')[1].strip().split('.')[0]
-        where_conditions.append(exp.EQ(
-            this=exp.Column(this=left_col, table=left_table),
-            expression=exp.Column(this=right_col, table=right_table)
-        ))
+        if len(condition.split(";")) > 1:
+            condition = condition.split(";")[0]
+        left_col = condition.split("=")[0].strip().split(".")[1]
+        left_table = condition.split("=")[0].strip().split(".")[0]
+        right_col = condition.split("=")[1].strip().split(".")[1]
+        right_table = condition.split("=")[1].strip().split(".")[0]
+        where_conditions.append(
+            exp.EQ(
+                this=exp.Column(this=left_col, table=left_table),
+                expression=exp.Column(this=right_col, table=right_table),
+            )
+        )
 
     # Add filtering conditions to WHERE (using placeholders)
     for table, col in filtering_columns_with_tables:
-        where_conditions.append(exp.EQ(
-            this=exp.Column(this=col, table=table),
-            expression=exp.Placeholder()  # Placeholder for filtering
-        ))
+        where_conditions.append(
+            exp.EQ(
+                this=exp.Column(this=col, table=table),
+                expression=exp.Placeholder(),  # Placeholder for filtering
+            )
+        )
 
     # Apply WHERE conditions without unnecessary parentheses
     if where_conditions:
-        base_query = base_query.where(where_conditions[0])  # Start with the first condition
+        base_query = base_query.where(
+            where_conditions[0]
+        )  # Start with the first condition
         for condition in where_conditions[1:]:
             base_query = base_query.where(condition)  # Add remaining conditions
 
     # Replace parentheses with an empty character in the SQL query string
-    main_query = base_query.sql().replace('(', '').replace(')', '')
+    main_query = base_query.sql().replace("(", "").replace(")", "")
 
     # Now, generate the test query
-    test_select_columns = [f"{table}.{col}" for table, col in
-                           projection_columns_with_tables + filtering_columns_with_tables]
+    test_select_columns = [
+        f"{table}.{col}"
+        for table, col in projection_columns_with_tables + filtering_columns_with_tables
+    ]
 
     # Create the WHERE clause for the test query
     test_where_conditions = []
     for _, _, condition in join_conditions:
-        if len(condition.split(';')) > 1:
-            condition = condition.split(';')[0]  # Use only the first part if there are multiple
-        left_table, left_col = condition.split('=')[0].strip().split('.')
-        right_table, right_col = condition.split('=')[1].strip().split('.')
-        test_where_conditions.append(f"{left_table}.{left_col} = {right_table}.{right_col}")
+        if len(condition.split(";")) > 1:
+            condition = condition.split(";")[
+                0
+            ]  # Use only the first part if there are multiple
+        left_table, left_col = condition.split("=")[0].strip().split(".")
+        right_table, right_col = condition.split("=")[1].strip().split(".")
+        test_where_conditions.append(
+            f"{left_table}.{left_col} = {right_table}.{right_col}"
+        )
 
     # Construct the test query
     test_query = f"""
-    SELECT {', '.join(test_select_columns)}, COUNT(*) AS combination_count
+    SELECT {", ".join(test_select_columns)}, COUNT(*) AS combination_count
     FROM {from_clause}
-    WHERE {' AND '.join(test_where_conditions)}
-    GROUP BY {', '.join(test_select_columns)};
+    WHERE {" AND ".join(test_where_conditions)}
+    GROUP BY {", ".join(test_select_columns)};
     """
 
     # Return both queries and relevant columns
     return {
-        'main_query': main_query,
-        'test_query': test_query,
-        'projection_columns': projection_columns_with_tables,
-        'filtering_columns': filtering_columns_with_tables
+        "main_query": main_query,
+        "test_query": test_query,
+        "projection_columns": projection_columns_with_tables,
+        "filtering_columns": filtering_columns_with_tables,
     }
