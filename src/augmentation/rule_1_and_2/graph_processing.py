@@ -11,7 +11,9 @@ def find_candidate_table(schema, subgraph):
 
     for node in schema.nodes():
         if node not in subgraph_nodes:
-            connections_to_subgraph = list(filter(lambda n: n in subgraph_nodes, schema.neighbors(node)))
+            connections_to_subgraph = list(
+                filter(lambda n: n in subgraph_nodes, schema.neighbors(node))
+            )
             if connections_to_subgraph:
                 candidate_tables[node] = connections_to_subgraph
 
@@ -65,9 +67,13 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
         schema (nx.Graph): The main schema graph.
 
     Returns:
-        tuple: (rule_1_patterns, rule_2_patterns)
+        tuple: (rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after)
     """
     unique_patterns = []  # Store all unique patterns across iterations
+
+    # Counts before pruning
+    r1_before = 0
+    r2_before = 0
 
     # Step 1: Extend each subgraph and filter for unique patterns
     for subgraph in pre_rule_subgraphs:
@@ -77,13 +83,31 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
             # Create the extended subgraph
             extended_subgraph = subgraph.copy()
             extended_subgraph.add_node(candidate_table)
-            extended_subgraph.add_edges_from([(candidate_table, conn) for conn in connections])
+            extended_subgraph.add_edges_from(
+                [(candidate_table, conn) for conn in connections]
+            )
+
+            num_nodes = len(extended_subgraph.nodes())
+            max_nodes = (
+                max(len(sg.nodes()) for sg in pre_rule_subgraphs)
+                if pre_rule_subgraphs
+                else 0
+            )
+
+            # Count extended subgraphs before pruning
+            if num_nodes == max_nodes + 1:
+                r1_before += 1
+            elif 2 <= num_nodes <= max_nodes:
+                r2_before += 1
 
             # Check isomorphic conditions
             if not is_pattern_in_list(extended_subgraph, pre_rule_subgraphs):
-                equivalent_patterns = generate_connected_subgraphs(schema, list(extended_subgraph.nodes()))
+                equivalent_patterns = generate_connected_subgraphs(
+                    schema, list(extended_subgraph.nodes())
+                )
                 valid_candidates = [
-                    pattern for pattern in [extended_subgraph] + equivalent_patterns
+                    pattern
+                    for pattern in [extended_subgraph] + equivalent_patterns
                     if not is_pattern_in_list(pattern, pre_rule_subgraphs)
                 ]
 
@@ -96,10 +120,11 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
     # Step 2: Divide the unique patterns into Rule 1 and Rule 2
     rule_1_patterns = []
     rule_2_patterns = []
-    if pre_rule_subgraphs:
-        max_nodes = max(len(subgraph.nodes()) for subgraph in pre_rule_subgraphs)
-    else:
-        max_nodes = 0  # Handle empty pre_rule_subgraphs
+    max_nodes = (
+        max(len(subgraph.nodes()) for subgraph in pre_rule_subgraphs)
+        if pre_rule_subgraphs
+        else 0
+    )
 
     for pattern in unique_patterns:
         if len(pattern.nodes()) == max_nodes + 1:
@@ -111,7 +136,10 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
     rule_1_patterns.sort(key=lambda p: len(p.nodes()))
     rule_2_patterns.sort(key=lambda p: len(p.nodes()))
 
-    return rule_1_patterns, rule_2_patterns
+    r1_after = len(rule_1_patterns)
+    r2_after = len(rule_2_patterns)
+
+    return rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after
 
 
 def calculate_subgraph_centrality(subgraph, centrality_dict):
@@ -119,7 +147,9 @@ def calculate_subgraph_centrality(subgraph, centrality_dict):
     Calculate the average centrality for a given subgraph.
     """
     subgraph_nodes = list(subgraph.nodes())
-    return sum(centrality_dict.get(node, 0) for node in subgraph_nodes) / len(subgraph_nodes)
+    return sum(centrality_dict.get(node, 0) for node in subgraph_nodes) / len(
+        subgraph_nodes
+    )
 
 
 def is_cyclic(subgraph):

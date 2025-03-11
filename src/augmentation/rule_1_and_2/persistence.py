@@ -102,11 +102,11 @@ def process_rule_folder(rule_folder, graph_data_folder, rule_name, json_output_f
 
     for idx, entry in enumerate(global_rule_data_sorted):
         if question_type == 'explicit':
-            question = ""
-            # question = generate_explicit_question(entry['main_query'])
+            # question = ""
+            question = generate_explicit_question(entry['main_query'])
         if question_type == 'dev_set_like':
-            question = ""
-            # question = generate_dev_set_like_question(entry['main_query'])
+            # question = ""
+            question = generate_dev_set_like_question(entry['main_query'])
         json_data.append({
             "question_id": idx,
             "db_id": entry['db_id'],

@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import csv
 
 from rule_1_and_2 import (
     retrieve_all_dev_patterns,
@@ -45,6 +46,7 @@ def run_rule_1_and_2():
         return
     df = pd.read_csv(query_stats_path)
 
+    augmentation_numbers = []
     for db_id in db_ids:
         print(f"\nProcessing Database: {db_id}")
 
@@ -89,11 +91,20 @@ def run_rule_1_and_2():
         )
 
         # Extend and filter subgraphs based on rules
-        rule_1_patterns, rule_2_patterns = extend_and_filter_subgraphs(
+        rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after = extend_and_filter_subgraphs(
             database_subgraphs, schema
         )
         print(f"Rule 1 Patterns for {db_id}: {len(rule_1_patterns)}")
         print(f"Rule 2 Patterns for {db_id}: {len(rule_2_patterns)}")
+
+        augmentation_stat = {
+            "db_id": db_id,
+            "rule_1_without_pruning": r1_before,
+            "rule_2_without_pruning": r2_before,
+            "rule_1_with_pruning": r1_after,
+            "rule_2_with_pruning": r2_after,
+        }
+        augmentation_numbers.append(augmentation_stat)
 
         # Generate queries for Rule 1 and Rule 2
         rule_1_data = []
@@ -155,13 +166,23 @@ def run_rule_1_and_2():
         process_queries_for_rules(rule_1_data, db_id, database_path_template)
         process_queries_for_rules(rule_2_data, db_id, database_path_template)
 
-        # rule_1_data = filter_valid_queries(rule_1_data, database_path_template)
-        # rule_2_data = filter_valid_queries(rule_2_data, database_path_template)
+        rule_1_data = filter_valid_queries(rule_1_data, database_path_template)
+        rule_2_data = filter_valid_queries(rule_2_data, database_path_template)
 
         # Save outputs
         save_rule_data(rule_1_data, "rule_1", rule_outputs_folder, db_id)
         save_rule_data(rule_2_data, "rule_2", rule_outputs_folder, db_id)
         print(f"Data saved successfully for {db_id}.")
+
+
+    # Save augmentation statistics
+    augmentation_stats_output = os.path.join(rule_outputs_base, "augmentation_stats.csv")
+    fieldnames = ["db_id", "rule_1_without_pruning", "rule_2_without_pruning", "rule_1_with_pruning", "rule_2_with_pruning"]
+    with open(augmentation_stats_output, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(augmentation_numbers)
+    print(f"Augmentation statistics saved to {augmentation_stats_output}.")
 
     # Global ordering and final output generation for all databases
     for rule_name in ["rule_1", "rule_2"]:
