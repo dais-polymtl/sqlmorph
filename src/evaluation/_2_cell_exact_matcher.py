@@ -44,6 +44,19 @@ class SQLResultEvaluator:
         common_cols = set(gt_columns) & set(pred_columns)
         logger.log("debug", "COLUMN_INTERSECTION", {"COMMON_COLUMNS": list(common_cols)})
 
+        # Check if there are no common columns - special case
+        if len(common_cols) == 0:
+            return {
+                "EX": 0,  # Not an exact match
+                "EXP": 0.0,  # No precision when columns don't match
+                "EXR": 0.0,  # No recall when columns don't match
+                "F1": 0.0,  # Zero F1 score
+                "matched_cells": 0,
+                "ground_truth_cells": len(gt_rows) * len(gt_columns),
+                "predicted_cells": len(pred_rows) * len(pred_columns),
+                "time_taken": time.time() - start_time
+            }
+
         # 3. Project rows to only include common columns
         # Create mapping from column to index for both datasets
         gt_col_to_idx = {col: idx for idx, col in enumerate(gt_columns)}
@@ -172,7 +185,7 @@ if __name__ == "__main__":
     evaluator = SQLResultEvaluator(executor)
 
     predicted_sql = """
-    SELECT T3.Phone
+    SELECT T3.City
     FROM satscores T1 
     JOIN schools T3 ON T1.cds = T3.CDSCode 
     WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
@@ -180,7 +193,7 @@ if __name__ == "__main__":
     LIMIT 10;
     """
     ground_truth_sql = """
-    SELECT T1.Phone, T1.City, T1.State, T1.MailStreet
+    SELECT T1.Phone
     FROM schools AS T1 
     INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
     ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
