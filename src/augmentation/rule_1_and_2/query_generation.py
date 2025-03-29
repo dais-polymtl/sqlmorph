@@ -149,10 +149,14 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
     # Collect join conditions from the edges of the subgraph
     for edge in pattern.edges(data=True):
         left_table, right_table, edge_data = edge
-        if "label" in edge_data:
+        if edge_data.get("color") == "red":
+            join_condition = edge_data.get("label").split(";")[0]
+        elif edge_data.get("color") == "blue":
             join_condition = edge_data.get("label")
-        else:
-            join_condition = schema.edges[(left_table, right_table)].get("label")
+        # if "label" in edge_data:
+        #     join_condition = edge_data.get("label")
+        # else:
+        #     join_condition = schema.edges[(left_table, right_table)].get("label")
         join_conditions.append((left_table, right_table, join_condition))
 
     # Get the tables involved in the current query
@@ -182,18 +186,20 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
 
     # Add join conditions to WHERE
     for _, _, condition in join_conditions:
-        if len(condition.split(";")) > 1:
-            condition = condition.split(";")[0]
-        left_col = condition.split("=")[0].strip().split(".")[1]
-        left_table = condition.split("=")[0].strip().split(".")[0]
-        right_col = condition.split("=")[1].strip().split(".")[1]
-        right_table = condition.split("=")[1].strip().split(".")[0]
-        where_conditions.append(
-            exp.EQ(
-                this=exp.Column(this=left_col, table=left_table),
-                expression=exp.Column(this=right_col, table=right_table),
+        # if len(condition.split(";")) > 1:
+        #     condition = condition.split(";")[0]
+        separated_conditions = condition.split(";")
+        for separated_condition in separated_conditions:
+            left_col = separated_condition.split("=")[0].strip().split(".")[1]
+            left_table = separated_condition.split("=")[0].strip().split(".")[0]
+            right_col = separated_condition.split("=")[1].strip().split(".")[1]
+            right_table = separated_condition.split("=")[1].strip().split(".")[0]
+            where_conditions.append(
+                exp.EQ(
+                    this=exp.Column(this=left_col, table=left_table),
+                    expression=exp.Column(this=right_col, table=right_table),
+                )
             )
-        )
 
     # Add filtering conditions to WHERE (using placeholders)
     for table, col in filtering_columns_with_tables:
@@ -224,15 +230,24 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
     # Create the WHERE clause for the test query
     test_where_conditions = []
     for _, _, condition in join_conditions:
-        if len(condition.split(";")) > 1:
-            condition = condition.split(";")[
-                0
-            ]  # Use only the first part if there are multiple
-        left_table, left_col = condition.split("=")[0].strip().split(".")
-        right_table, right_col = condition.split("=")[1].strip().split(".")
-        test_where_conditions.append(
-            f"{left_table}.{left_col} = {right_table}.{right_col}"
-        )
+        # if len(condition.split(";")) > 1:
+        separated_conditions = condition.split(";")
+        for separated_condition in separated_conditions:
+            left_col = separated_condition.split("=")[0].strip().split(".")[1]
+            left_table = separated_condition.split("=")[0].strip().split(".")[0]
+            right_col = separated_condition.split("=")[1].strip().split(".")[1]
+            right_table = separated_condition.split("=")[1].strip().split(".")[0]
+            test_where_conditions.append(
+                f"{left_table}.{left_col} = {right_table}.{right_col}"
+            )
+        #     condition = condition.split(";")[
+        #         0
+        #     ]  # Use only the first part if there are multiple
+        # left_table, left_col = condition.split("=")[0].strip().split(".")
+        # right_table, right_col = condition.split("=")[1].strip().split(".")
+        # test_where_conditions.append(
+        #     f"{left_table}.{left_col} = {right_table}.{right_col}"
+        # )
 
     # Construct the test query
     test_query = f"""
@@ -249,3 +264,126 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
         "projection_columns": projection_columns_with_tables,
         "filtering_columns": filtering_columns_with_tables,
     }
+
+# def modify_rule_1_queries(pattern):
+#     extended_subgraph = pattern['extended_subgraph']
+#     equivalent_queries = pattern['equivalent_queries']
+#     old_subgraph = pattern['subgraph']
+#     added_joins = []
+#     added_alias = "extra_table"
+#     added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
+#     for edge in extended_subgraph.edges(data=True):
+#         if edge[2]['color'] == 'red':
+#             multiple_labels = edge[2]['label'].split(";")
+#             for label in multiple_labels:
+#                 added_joins.append(label)
+
+#     for query in equivalent_queries:
+#         old_query = query['SQL']
+#         old_query = old_query
+#         old_query_tables = {table.name.lower(): table.alias for table in sqlglot.parse_one(old_query, dialect="mysql").find_all(exp.Table)}
+#         old_query_tables[added_table.lower()] = added_alias
+
+#         parsed_old_query = sqlglot.parse_one(old_query, dialect='mysql')
+#         if isinstance(parsed_old_query, exp.Select):
+#             if "joins" not in parsed_old_query.args:
+#                 parsed_old_query.args["joins"] = []
+            
+#             parsed_added_table = exp.Table(
+#                     this=exp.Identifier(this=added_table, quoted=False),
+#                     alias=exp.TableAlias(this=exp.Identifier(this=added_alias, quoted=False))
+#             )
+
+#             for join in added_joins:
+#                 left, right = join.split("=")
+#                 left_col, right_col = left.split(".")[1], right.split(".")[1]
+#                 left_table, right_table = left.split(".")[0], right.split(".")[0]
+#                 left_col, right_col = left_col.strip(), right_col.strip()
+#                 left_table, right_table = left_table.strip(), right_table.strip()
+#                 join_expr = exp.Join(
+#                     this=parsed_added_table,
+#                     on=exp.column(left_col, table=old_query_tables.get(left_table.lower(), left_table)).eq(exp.column(right_col, table=old_query_tables.get(right_table.lower(), right_table))),
+#                     kind="INNER"
+#                 )
+#                 parsed_old_query.args["joins"].append(join_expr)
+
+#         new_query = parsed_old_query.sql()
+#         query['new_query'] = new_query
+#     return pattern
+
+def modify_rule_1_queries(pattern):
+    extended_subgraph = pattern['extended_subgraph']
+    equivalent_queries = pattern['equivalent_queries']
+    old_subgraph = pattern['subgraph']
+    added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
+    
+    added_joins = []
+    for edge in extended_subgraph.edges(data=True):
+        if edge[2]['color'] == 'red':
+            added_joins.extend(edge[2]['label'].split(";"))
+
+    for query in equivalent_queries:
+        old_query = query['SQL']
+
+        # Step 1: Track all tables and their aliases
+        old_query_tables = {}
+        for table in sqlglot.parse_one(old_query, dialect="mysql").find_all(exp.Table):
+            table_name = table.name.lower()
+            table_alias = table.alias if table.alias else table_name
+            if table_name not in old_query_tables:
+                old_query_tables[table_name] = []
+            old_query_tables[table_name].append(table_alias)
+
+        # Step 2: Track assigned aliases for new table
+        added_table_aliases = []
+        
+        # Step 3: Parse and modify the old query
+        parsed_old_query = sqlglot.parse_one(old_query, dialect='mysql')
+        if isinstance(parsed_old_query, exp.Select):
+            if "joins" not in parsed_old_query.args:
+                parsed_old_query.args["joins"] = []
+            
+            alias_counter = 1  # Counter for dynamically generating aliases for the new table
+
+            for join in added_joins:
+                left, right = join.split("=")
+                left_table, left_col = left.split(".")
+                right_table, right_col = right.split(".")
+                left_table, left_col = left_table.strip(), left_col.strip()
+                right_table, right_col = right_table.strip(), right_col.strip()
+
+                # Ensure unique alias for each occurrence of the added table
+                if added_table.lower() in (left_table.lower(), right_table.lower()):
+                    new_alias = f"extra_table_{alias_counter}"
+                    alias_counter += 1
+                    added_table_aliases.append(new_alias)
+                else:
+                    new_alias = None  # Not the added table
+
+                # Assign correct aliases for left and right tables
+                left_alias = (
+                    new_alias if left_table.lower() == added_table.lower()
+                    else old_query_tables.get(left_table.lower(), [left_table])[0]
+                )
+                right_alias = (
+                    new_alias if right_table.lower() == added_table.lower()
+                    else old_query_tables.get(right_table.lower(), [right_table])[0]
+                )
+
+                # Create the join expression
+                join_expr = exp.Join(
+                    this=exp.Table(
+                        this=exp.Identifier(this=added_table, quoted=False),
+                        alias=exp.TableAlias(this=exp.Identifier(this=left_alias, quoted=False))
+                    ),
+                    on=exp.column(left_col, table=left_alias).eq(exp.column(right_col, table=right_alias)),
+                    kind="INNER"
+                )
+
+                parsed_old_query.args["joins"].append(join_expr)
+
+        # Step 4: Convert back to SQL
+        new_query = parsed_old_query.sql()
+        query['new_query'] = new_query
+
+    return pattern

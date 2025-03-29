@@ -70,11 +70,14 @@ def save_pre_rule_subgraphs(schema, subgraphs, rule_name, db_id, output_base_dir
     - db_id (str): Database identifier for saving images.
     - output_base_dir (str): Base directory to save images.
     """
-    subgraphs_sorted = sorted(subgraphs, key=lambda x: x.number_of_nodes())  # Sort by number of nodes
+    # subgraphs_sorted is a list of dicts, each dict having a 'subgraph' key, I wanna sort the list of dicts based on the number of nodes in the 'subgraph' key
+    
+    # subgraphs_sorted = sorted(subgraphs, key=lambda x: x["subgraph"].number_of_nodes())  # Sort by number of nodes
+    subgraphs_sorted = sorted(subgraphs, key=lambda x: x['subgraph'].number_of_nodes())  
     for i, subgraph in enumerate(subgraphs_sorted, start=1):
         display_and_save_subgraph(
             schema=schema,
-            subgraph=subgraph,
+            subgraph=subgraph['subgraph'],
             subgraph_number=i,
             rule=rule_name,
             time_period='pre_rule',

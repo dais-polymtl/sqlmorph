@@ -1,6 +1,8 @@
 import sqlite3
 import pandas as pd
 import re
+from func_timeout import func_timeout, FunctionTimedOut
+import multiprocessing
 
 def vacuum_database(conn):
     """Vacuum the SQLite database to optimize performance."""
@@ -70,30 +72,41 @@ def execute_test_query_and_replace_placeholders(
     return main_query
 
 
-def execute_query(db_file, query):
+def run_query(db_file, query, result_queue):
+    """Runs the query and stores the result in a queue."""
+    conn = sqlite3.connect(db_file)  # Create connection inside the process
+    try:
+        df = pd.read_sql_query(query, conn)
+        result_queue.put((df, "", ""))  # Send results back
+    except Exception as e:
+        result_queue.put((pd.DataFrame(), query, str(e)))
+    finally:
+        conn.close()
+
+def execute_query(db_file, query, timeout=240):
     """
-    Connects to the SQLite database and executes the given query.
+    Executes a SQLite query with a timeout by running it in a separate process.
 
     Parameters:
         db_file: Path to the SQLite database file.
         query: SQL query to execute.
+        timeout: Maximum execution time in seconds.
 
     Returns:
-        DataFrame containing the results of the query.
+        DataFrame containing the results, or an empty DataFrame on timeout/error.
     """
-    # Connect to the database
-    conn = sqlite3.connect(db_file)
+    result_queue = multiprocessing.Queue()
+    process = multiprocessing.Process(target=run_query, args=(db_file, query, result_queue))
+    process.start()
+    process.join(timeout)  # Wait for the process to finish within the timeout
 
-    try:
-        # Execute the query and fetch results
-        df = pd.read_sql_query(query, conn)
-        return df
-    except Exception as e:
-        print(f"Error executing query: {e}")
-        return pd.DataFrame()  # Return an empty DataFrame on error
-    finally:
-        # Close the connection
-        conn.close()
+    if process.is_alive():
+        process.terminate()  # Kill the process if it exceeds the timeout
+        process.join()
+        print(f"Query execution timed out after {timeout} seconds.")
+        return pd.DataFrame(), query, f"Query timed out after {timeout} seconds."
+
+    return result_queue.get() if not result_queue.empty() else (pd.DataFrame(), query, "Unknown error")
 
 
 def process_queries_for_rules(rule_data, db_id, database_path):
@@ -165,7 +178,7 @@ def filter_valid_queries(rule_data, db_file):
                     "Ancestor's Chosen", "Ancestor''s Chosen"
                 )
             # Execute the query and check if it returns results
-            result_df = execute_query(db_file, element["main_query"])
+            result_df, _, _ = execute_query(db_file, element["main_query"])
             if result_df.empty:
                 print("Query did not return any results. Skipping...")
                 print(f"Main Query: {element['main_query']}")
@@ -173,3 +186,61 @@ def filter_valid_queries(rule_data, db_file):
                 print("Query executed successfully!")
                 valid_data.append(element)
     return valid_data
+
+def filter_valid_queries_2nd_version(rule_data, db_file):
+    """
+    Filters the given rule data to keep only valid queries.
+
+    Parameters:
+    - rule_data: List of dictionaries containing query information.
+    - db_file: Path to the SQLite database file.
+
+    Returns:
+    - List of dictionaries with valid queries.
+    """
+    valid_data = []
+    error_queries = []
+    empty_queries = []
+
+    print(f"Total Queries: {len(rule_data)}")
+    if len(rule_data) == 0:
+        return rule_data, [], []
+    
+    for pattern in rule_data:
+        equivalent_queries = pattern.get("equivalent_queries", [])
+        valid_equivalent_queries = []
+
+        for query in equivalent_queries:
+            new_query = query.get("new_query", "")
+
+            result_df, error_query, error = execute_query(db_file, new_query)
+
+            if result_df.empty and error_query != "":
+                print("Query did not return any results. Skipping...")
+                print(f"Main Query: {new_query}")
+                empty_queries.append({
+                    "db_id": query.get("db_id", ""),
+                    "question": query.get("question", ""),
+                    "SQL": query.get("SQL", ""),
+                    "new_query": new_query
+                })
+            else:
+                print("Query executed successfully!")
+                query["new_query"] = new_query
+                valid_equivalent_queries.append(query)
+            
+            if len(error_query) > 0:
+                error_queries.append({
+                    "db_id": query.get("db_id", ""),
+                    "question": query.get("question", ""),
+                    "SQL": query.get("SQL", ""),
+                    "new_query": error_query,
+                    "error": error
+                })
+
+        pattern["equivalent_queries"] = valid_equivalent_queries
+        if len(valid_equivalent_queries) > 0:
+            valid_data.append(pattern)    
+
+    return valid_data, error_queries, empty_queries
+

@@ -19,8 +19,9 @@ def retrieve_all_dev_patterns(folder_path):
         try:
             with file_name.open('rb') as f:
                 join_patterns = pickle.load(f)
-                subgraphs = join_patterns.get('subgraphs', [])
-                all_subgraphs.extend(subgraphs)
+                # subgraphs = [join_pattern['subgraph'] for join_pattern in join_patterns]
+                # all_subgraphs.extend(subgraphs)
+                all_subgraphs.extend(join_patterns)
         except (ValueError, KeyError, pickle.UnpicklingError) as e:
             print(f"Skipping file {file_name.name}: {e}")
 
