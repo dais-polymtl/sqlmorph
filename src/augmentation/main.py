@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import csv
+import json
 
 from rule_1_and_2 import (
     retrieve_all_dev_patterns,
@@ -8,9 +9,9 @@ from rule_1_and_2 import (
     extend_and_filter_subgraphs,
     ensure_directory,
 )
-from rule_1_and_2.persistence import save_rule_data, process_rule_folder
-from rule_1_and_2.query_execution import process_queries_for_rules, filter_valid_queries
-from rule_1_and_2.query_generation import generate_inner_join_query_with_test
+from rule_1_and_2.persistence import save_rule_data, process_rule_folder, process_rule_folder_2nd_version
+from rule_1_and_2.query_execution import process_queries_for_rules, filter_valid_queries, filter_valid_queries_2nd_version
+from rule_1_and_2.query_generation import generate_inner_join_query_with_test, modify_rule_1_queries
 from rule_1_and_2.visualization import save_pre_rule_subgraphs
 
 
@@ -31,7 +32,12 @@ def run_rule_1_and_2():
         "thrombosis_prediction",
         "toxicology",
     ]
-    rule_inputs_base = os.path.join(data_folder, "rule_inputs", "essay_bird_subgraphs")
+    # db_ids = [
+    #     "california_schools",
+    #     "card_games"
+    # ]
+
+    rule_inputs_base = os.path.join(data_folder, "rule_inputs", "rules_1_2")
     graph_data_base = os.path.join(data_folder, "graph_data", "bird_graphs", "pickles")
     rule_outputs_base = os.path.join(data_folder, "rule_outputs", "rules_1_2")
     images_output_base = os.path.join(rule_outputs_base, "images")
@@ -47,6 +53,17 @@ def run_rule_1_and_2():
     df = pd.read_csv(query_stats_path)
 
     augmentation_numbers = []
+    rule_1_error_queries_for_databases = []
+    rule_2_error_queries_for_databases = []
+    rule_1_empty_queries_for_databases = []
+    rule_2_empty_queries_for_databases = []
+
+    rule_outputs_folder = os.path.join(rule_outputs_base)
+    rule_1_error_queries_path = os.path.join(rule_outputs_folder, f"rule_1_error_queries.json")
+    rule_2_error_queries_path = os.path.join(rule_outputs_folder, f"rule_2_error_queries.json")
+    rule_1_empty_queries_path = os.path.join(rule_outputs_folder, f"rule_1_empty_queries.json")
+    rule_2_empty_queries_path = os.path.join(rule_outputs_folder, f"rule_2_empty_queries.json")
+    
     for db_id in db_ids:
         print(f"\nProcessing Database: {db_id}")
 
@@ -55,6 +72,8 @@ def run_rule_1_and_2():
         graph_data_folder = graph_data_base
         rule_outputs_folder = os.path.join(rule_outputs_base)
         images_output_dir = os.path.join(images_output_base, db_id)
+
+
         ensure_directory(images_output_dir)
 
         # Retrieve all subgraphs
@@ -91,7 +110,8 @@ def run_rule_1_and_2():
         )
 
         # Extend and filter subgraphs based on rules
-        rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after = extend_and_filter_subgraphs(
+
+        rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after, r1_dev_before, r2_dev_before, r1_dev_after, r2_dev_after = extend_and_filter_subgraphs(
             database_subgraphs, schema
         )
         print(f"Rule 1 Patterns for {db_id}: {len(rule_1_patterns)}")
@@ -103,15 +123,24 @@ def run_rule_1_and_2():
             "rule_2_without_pruning": r2_before,
             "rule_1_with_pruning": r1_after,
             "rule_2_with_pruning": r2_after,
+            "rule_1_dev_before": r1_dev_before,
+            "rule_2_dev_before": r2_dev_before,
+            "rule_1_dev_after": r1_dev_after,
+            "rule_2_dev_after": r2_dev_after,
         }
         augmentation_numbers.append(augmentation_stat)
 
         # Generate queries for Rule 1 and Rule 2
         rule_1_data = []
         rule_2_data = []
+        rule_1_data_2nd_version = []
+        rule_2_data_2nd_version = []
 
         for pattern in rule_1_patterns:
-            result = generate_inner_join_query_with_test(schema, pattern, db_id, df)
+            # result = generate_inner_join_query_with_test(schema, pattern['extended_subgraph'], db_id, df)
+            result = generate_inner_join_query_with_test(schema, pattern['extended_subgraph'], db_id, df)
+            result_2nd_version = modify_rule_1_queries(pattern)
+
             if db_id == "financial":
                 if "order" in result["main_query"]:
                     result["main_query"] = result["main_query"].replace(
@@ -130,9 +159,12 @@ def run_rule_1_and_2():
                     "filtering_columns": result["filtering_columns"],
                 }
             )
+            rule_1_data_2nd_version.append(result_2nd_version)
 
         for pattern in rule_2_patterns:
-            result = generate_inner_join_query_with_test(schema, pattern, db_id, df)
+            # result = generate_inner_join_query_with_test(schema, pattern['extended_subgraph'], db_id, df)
+            result = generate_inner_join_query_with_test(schema, pattern['extended_subgraph'], db_id, df)
+            result_2nd_version = modify_rule_1_queries(pattern)
             if db_id == "financial":
                 if "order" in result["main_query"]:
                     result["main_query"] = result["main_query"].replace(
@@ -151,6 +183,7 @@ def run_rule_1_and_2():
                     "filtering_columns": result["filtering_columns"],
                 }
             )
+            rule_2_data_2nd_version.append(result_2nd_version)
 
         database_path_template = os.path.join(
             data_folder, "benchmarks", "Bird", "dev_databases", db_id, f"{db_id}.sqlite"
@@ -166,18 +199,31 @@ def run_rule_1_and_2():
         process_queries_for_rules(rule_1_data, db_id, database_path_template)
         process_queries_for_rules(rule_2_data, db_id, database_path_template)
 
+
         rule_1_data = filter_valid_queries(rule_1_data, database_path_template)
         rule_2_data = filter_valid_queries(rule_2_data, database_path_template)
 
+        rule_1_data_2nd_version, rule_1_error_queries, rule_1_empty_queries = filter_valid_queries_2nd_version(rule_1_data_2nd_version, database_path_template)
+        rule_2_data_2nd_version, rule_2_error_queries, rule_2_empty_queries = filter_valid_queries_2nd_version(rule_2_data_2nd_version, database_path_template)
+
+        rule_1_error_queries_for_databases.extend(rule_1_error_queries)
+        rule_2_error_queries_for_databases.extend(rule_2_error_queries)
+        rule_1_empty_queries_for_databases.extend(rule_1_empty_queries)
+        rule_2_empty_queries_for_databases.extend(rule_2_empty_queries)
+            
         # Save outputs
         save_rule_data(rule_1_data, "rule_1", rule_outputs_folder, db_id)
         save_rule_data(rule_2_data, "rule_2", rule_outputs_folder, db_id)
+
+        save_rule_data(rule_1_data_2nd_version, "rule_1_2nd_version", rule_outputs_folder, db_id)
+        save_rule_data(rule_2_data_2nd_version, "rule_2_2nd_version", rule_outputs_folder, db_id)
         print(f"Data saved successfully for {db_id}.")
 
 
     # Save augmentation statistics
     augmentation_stats_output = os.path.join(rule_outputs_base, "augmentation_stats.csv")
     fieldnames = ["db_id", "rule_1_without_pruning", "rule_2_without_pruning", "rule_1_with_pruning", "rule_2_with_pruning"]
+    fieldnames += ["rule_1_dev_before", "rule_2_dev_before", "rule_1_dev_after", "rule_2_dev_after"]
     with open(augmentation_stats_output, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -208,7 +254,41 @@ def run_rule_1_and_2():
                 f"Files {os.path.basename(json_output)} and {os.path.basename(sql_output)} generated successfully for {rule_name}."
             )
 
-    print("\nAll databases processed successfully.")
+    print("\nAll databases processed successfully for the first version.")
+
+    for rule_name in ["rule_1_2nd_version", "rule_2_2nd_version"]:
+        for query_type in ["original", "new"]:
+            print(
+                f"\nProcessing Global Outputs for {rule_name} with {question_type} questions..."
+            )
+            first_part = rule_name.replace("rule_", "")
+            json_output = os.path.join(
+                rule_outputs_base, f"dev_{first_part}_{query_type}.json"
+
+            )
+            sql_output = os.path.join(
+                rule_outputs_base, f"dev_{first_part}_{query_type}.sql"
+            )
+            process_rule_folder_2nd_version(
+                rule_outputs_folder,
+                graph_data_base,
+                rule_name,
+                json_output,
+                sql_output,
+                query_type,
+            )
+            print(
+                f"Files {os.path.basename(json_output)} and {os.path.basename(sql_output)} generated successfully for {rule_name}."
+            )
+
+    with open(rule_1_error_queries_path, "w") as f:
+        json.dump(rule_1_error_queries_for_databases, f, indent=4)
+    with open(rule_2_error_queries_path, "w") as f:
+        json.dump(rule_2_error_queries_for_databases, f, indent=4)
+    with open(rule_1_empty_queries_path, "w") as f:
+        json.dump(rule_1_empty_queries_for_databases, f, indent=4)
+    with open(rule_2_empty_queries_path, "w") as f:
+        json.dump(rule_2_empty_queries_for_databases, f, indent=4)
 
 
 if __name__ == "__main__":

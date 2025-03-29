@@ -134,7 +134,7 @@ def process_json_file(
             images_dir.mkdir(parents=True, exist_ok=True)
 
             pattern_id = len(list(images_dir.glob("pattern_*.png"))) + 1
-            pattern_signature = frozenset([table_name])
+            pattern_signature = frozenset([table_name.lower()])
             bucket_dir = db_id_output_dir / f"join_patterns_{num_tables}_tables.pkl"
 
             # Check if pattern already exists
@@ -142,15 +142,21 @@ def process_json_file(
                 with open(bucket_dir, "rb") as f:
                     all_patterns = pickle.load(f)
             else:
-                all_patterns = {"patterns": [], "subgraphs": []}
+                all_patterns = []
 
             # Save new pattern and subgraph if not already saved
-            if pattern_signature not in [pat[0] for pat in all_patterns["patterns"]]:
-                all_patterns["patterns"].append((pattern_signature, pattern_id))
-                all_patterns["subgraphs"].append(subgraph)
+            seen_pattern_signatures = [pat["pattern_signature"] for pat in all_patterns]
+            if pattern_signature in seen_pattern_signatures:
+                pattern_index = seen_pattern_signatures.index(pattern_signature)
+                all_patterns[pattern_index]["equivalent_queries"].append(pattern)
 
-                with open(bucket_dir, "wb") as f:
-                    pickle.dump(all_patterns, f)
+            else:
+                subgraph_data = {
+                    "pattern_signature": pattern_signature,
+                    "subgraph": subgraph,
+                    "equivalent_queries": [pattern],
+                }
+                all_patterns.append(subgraph_data)
 
                 edge_labels = {}
                 save_subgraph_image(
@@ -163,6 +169,8 @@ def process_json_file(
                     output_dir,
                 )
                 pattern_count_by_table[db_id][num_tables] += 1
+            with open(bucket_dir, "wb") as f:
+                pickle.dump(all_patterns, f)
         else:
             # Handle join relations
             join_relations = pattern["Join_relations_without_aliases"]
@@ -177,16 +185,38 @@ def process_json_file(
                 left_col, right_col = relation.split("=")
                 left_col, right_col = left_col.strip(), right_col.strip()
                 table_names.update([x.split(".")[0] for x in [left_col, right_col]])
-                columns_in_relations.add(frozenset([left_col, right_col]))
+                columns_in_relations.add(
+                    frozenset([left_col.lower(), right_col.lower()])
+                )
+                left_node, right_node = left_col.split(".")[0], right_col.split(".")[0]
+                matched_left_node = next(
+                    (
+                        node
+                        for node in main_graph.nodes
+                        if node.lower() == left_node.lower()
+                    ),
+                    left_node,
+                )
+                matched_right_node = next(
+                    (
+                        node
+                        for node in main_graph.nodes
+                        if node.lower() == right_node.lower()
+                    ),
+                    right_node,
+                )
 
-                edge = (left_col.split(".")[0], right_col.split(".")[0])
-                edge_labels[edge] = relation
+                edge = (matched_left_node, matched_right_node)
+
+                if edge not in edge_labels:
+                    edge_labels[edge] = [relation]
+                else:
+                    if relation not in edge_labels[edge]:
+                        edge_labels[edge].append(relation)
                 edges_to_include.add(edge)
 
                 if main_graph.has_edge(*edge):
-                    if "label" in main_graph[edge[0]][edge[1]]:
-                        del main_graph[edge[0]][edge[1]]["label"]
-                    main_graph[edge[0]][edge[1]]["label"] = relation
+                    main_graph[edge[0]][edge[1]]["label"] = "; ".join(edge_labels[edge])
 
             subgraph_nodes = list(table_names)
             subgraph = nx.Graph()
@@ -209,7 +239,7 @@ def process_json_file(
 
             pattern_id = len(list(images_dir.glob("pattern_*.png"))) + 1
             pattern_signature = (
-                frozenset(subgraph.nodes),
+                frozenset([node.lower() for node in subgraph_nodes]),
                 frozenset(columns_in_relations),
             )
             bucket_dir = db_id_output_dir / f"join_patterns_{num_tables}_tables.pkl"
@@ -219,15 +249,20 @@ def process_json_file(
                 with open(bucket_dir, "rb") as f:
                     all_patterns = pickle.load(f)
             else:
-                all_patterns = {"patterns": [], "subgraphs": []}
+                all_patterns = []
 
             # Save new pattern and subgraph if not already saved
-            if pattern_signature not in [pat[0] for pat in all_patterns["patterns"]]:
-                all_patterns["patterns"].append((pattern_signature, pattern_id))
-                all_patterns["subgraphs"].append(subgraph)
-
-                with open(bucket_dir, "wb") as f:
-                    pickle.dump(all_patterns, f)
+            seen_pattern_signatures = [pat["pattern_signature"] for pat in all_patterns]
+            if pattern_signature in seen_pattern_signatures:
+                pattern_index = seen_pattern_signatures.index(pattern_signature)
+                all_patterns[pattern_index]["equivalent_queries"].append(pattern)
+            else:
+                subgraph_data = {
+                    "pattern_signature": pattern_signature,
+                    "subgraph": subgraph,
+                    "equivalent_queries": [pattern],
+                }
+                all_patterns.append(subgraph_data)
 
                 save_subgraph_image(
                     main_graph,
@@ -239,6 +274,8 @@ def process_json_file(
                     output_dir,
                 )
                 pattern_count_by_table[db_id][num_tables] += 1
+            with open(bucket_dir, "wb") as f:
+                pickle.dump(all_patterns, f)
 
 
 def run(patterns_dir: str, graphs_dir: str, output_dir: str) -> None:
@@ -272,21 +309,27 @@ def run(patterns_dir: str, graphs_dir: str, output_dir: str) -> None:
             logging.info(f"  Unique patterns with {num_tables} tables: {count}")
         logging.info(f"  Total queries processed: {query_count_by_db[db_id]}")
 
+
 def main():
     """
     Main entry point of the script.
     Sets up the necessary directories and starts processing the data.
     """
     # Define paths to the required directories
-    patterns_dir = "bird_essay_data"  # Replace with the actual path to the patterns directory
-    graphs_dir = "bird_graphs/pickles/"     # Replace with the actual path to the graphs directory
-    output_dir = "essay_bird_subgraphs/"     # Replace with the actual path to the output directory
+    patterns_dir = (
+        "bird_parsed_queries"  # Replace with the actual path to the patterns directory
+    )
+    graphs_dir = (
+        "bird_graphs/pickles/"  # Replace with the actual path to the graphs directory
+    )
+    output_dir = "bird_essay/"  # Replace with the actual path to the output directory
 
     # Ensure the directories exist
     create_directories(output_dir)
 
     # Start processing the patterns
     run(patterns_dir, graphs_dir, output_dir)
+
 
 if __name__ == "__main__":
     main()
