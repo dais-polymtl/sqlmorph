@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "func-timeout>=4.3.5",
     "matplotlib>=3.10.0",
     "networkx>=3.4.2",
     "notebook>=7.3.2",
