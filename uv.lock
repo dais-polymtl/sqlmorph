@@ -417,6 +417,12 @@ wheels = [
 ]
 
 [[package]]
+name = "func-timeout"
+version = "4.3.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/0d/bf0567477f7281d9a3926c582bfef21bff7498fc0ffd3e9de21811896a0b/func_timeout-4.3.5.tar.gz", hash = "sha256:74cd3c428ec94f4edfba81f9b2f14904846d5ffccc27c92433b8b5939b5575dd", size = 44264 }
+
+[[package]]
 name = "h11"
 version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1762,6 +1768,7 @@ name = "text-to-sql-coverage"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "func-timeout" },
     { name = "matplotlib" },
     { name = "networkx" },
     { name = "notebook" },
@@ -1781,6 +1788,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "func-timeout", specifier = ">=4.3.5" },
     { name = "matplotlib", specifier = ">=3.10.0" },
     { name = "networkx", specifier = ">=3.4.2" },
     { name = "notebook", specifier = ">=7.3.2" },
