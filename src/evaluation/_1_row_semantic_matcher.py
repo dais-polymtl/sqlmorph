@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from datetime import datetime
 from typing import List, Tuple, Dict, Set, Any, Optional
@@ -7,9 +8,9 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
-from utils.embedding_calculator import EmbeddingCalculator
-from utils.logger import Logger, make_json_serializable
-from utils.query_executor import QueryExecutor, SQLiteQueryExecutor
+from src.core.database import DatabaseHandler, DBMS
+from src.core.logger import Logger
+from src.core.model_manager import ModelManager, ModelProvider, ModelType, OpenAIModel, OllamaModel, HuggingFaceModel
 
 logger = Logger(__name__)
 
@@ -38,13 +39,18 @@ class BipartiteMatcher:
 class SQLResultEvaluator:
     def __init__(
             self,
-            query_executor: QueryExecutor,
-            embedding_model_name: str = "text-embedding-ada-002"
+            db_params: dict,
+            embedding_model: OpenAIModel | OllamaModel | HuggingFaceModel,
     ):
-        self.query_executor = query_executor
-        self.embedding_calculator = EmbeddingCalculator(model_name=embedding_model_name)
+        self.db_handler = DatabaseHandler(dbms=db_params["dbms"], connection_params=db_params)
+        self.embedding_model = ModelManager.create_model(
+            model_provider=ModelProvider.OPENAI,
+            model_type=ModelType.EMBEDDING,
+            model_name=embedding_model,
+            openai_api_key=os.getenv("OPENAI_API_KEY", None),
+        )
         self.matcher = BipartiteMatcher()
-        logger.log("debug", "SQL_RESULT_EVALUATOR_INITIALIZED", {"embedding_model": embedding_model_name})
+
 
     def _build_row_representations(self, cols: List[str], rows: List[Tuple], all_cols: List[str]) -> Tuple[
         List[str], List[Dict[str, Any]]]:
@@ -72,7 +78,12 @@ class SQLResultEvaluator:
         if not row_strings:
             return np.zeros((0, 0), dtype=np.float32)
 
-        embeddings_lists = self.embedding_calculator.get_batch_embeddings(row_strings)
+        embeddings_lists = []
+        if row_strings:
+            for row_string in row_strings:
+                embedding = self.embedding_model.get_embedding(row_string)
+                embeddings_lists.append(embedding)
+
         return np.array(embeddings_lists, dtype=np.float32) if embeddings_lists else np.zeros((0, 0), dtype=np.float32)
 
     def _get_zero_result(self, start_time: float, error_message: Optional[str] = None) -> Dict[str, Any]:
@@ -101,8 +112,8 @@ class SQLResultEvaluator:
 
         # 1. Execute both queries with combined error handling
         try:
-            pred_cols, pred_rows = self.query_executor.execute_query(predicted_sql)
-            gt_cols, gt_rows = self.query_executor.execute_query(ground_truth_sql)
+            pred_cols, pred_rows = self.db_handler.run_query(predicted_sql)
+            gt_cols, gt_rows = self.db_handler.run_query(ground_truth_sql)
         except Exception as e:
             error_type = "QUERY_EXECUTION_FAILED"
             error_message = f"SQL execution failed: {str(e)}"
@@ -252,8 +263,8 @@ class SQLResultEvaluator:
     def get_dataframes(self, predicted_sql: str, ground_truth_sql: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Execute SQL queries and return results as DataFrames."""
         try:
-            gt_columns, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-            pred_columns, pred_rows = self.query_executor.execute_query(predicted_sql)
+            gt_columns, gt_rows = self.db_handler.run_query(ground_truth_sql)
+            pred_columns, pred_rows = self.db_handler.run_query(predicted_sql)
 
             gt_df = pd.DataFrame(gt_rows, columns=gt_columns)
             pred_df = pd.DataFrame(pred_rows, columns=pred_columns)
@@ -263,10 +274,36 @@ class SQLResultEvaluator:
             logger.log("error", "DATAFRAME_CREATION_FAILED", {"error": str(e)})
             return pd.DataFrame(), pd.DataFrame()
 
+def make_json_serializable(obj):
+    """
+    Convert objects to JSON serializable format.
+    Handles NumPy types, Pandas objects, and nested structures.
+    """
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient="records")
+    elif isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(make_json_serializable(item) for item in obj)
+    elif isinstance(obj, set):
+        return list(make_json_serializable(item) for item in obj)
+    else:
+        return obj
+
 
 if __name__ == "__main__":
     # Example usage
-    db_path = "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"
+    db_params = {"dbms": DBMS.SQLITE, "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"}
 
     # Example SQL queries
     predicted_sql = """
@@ -287,8 +324,7 @@ if __name__ == "__main__":
     """
 
     # Initialize evaluator and run evaluation
-    executor = SQLiteQueryExecutor(db_path)
-    evaluator = SQLResultEvaluator(executor)
+    evaluator = SQLResultEvaluator(embedding_model=OpenAIModel.TEXT_EMBEDDING_3_SMALL, db_params=db_params)
 
     # Run evaluation
     results = evaluator.evaluate(predicted_sql, ground_truth_sql)
@@ -344,7 +380,10 @@ if __name__ == "__main__":
             print(f"\n... and {num_unmatched_gt - 3} more unmatched ground truth rows")
 
     # Save detailed results to JSON file
-    log_filename = logger.get_log_filename("evaluation_results")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = os.path.join("data", f"sql_evaluation_logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_filename = os.path.join(log_dir, f"evaluation_results_{timestamp}.json")
     output_data = {
         "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "metrics": {

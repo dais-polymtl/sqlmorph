@@ -3,23 +3,23 @@ from collections import Counter
 
 import pandas as pd
 
-from utils.logger import Logger
-from utils.query_executor import QueryExecutor, SQLiteQueryExecutor
+from src.core.database.database_handler import DatabaseHandler, DBMS
+from src.core.logger import Logger
 
 logger = Logger(__name__)
 
 
 class SQLResultEvaluator:
-    def __init__(self, query_executor: QueryExecutor):
-        self.query_executor = query_executor
+    def __init__(self, db_params: dict):
+        self.db_handler = DatabaseHandler(dbms=db_params["dbms"], connection_params=db_params)
 
     def evaluate(self, predicted_sql: str, ground_truth_sql: str):
         """Evaluate predicted SQL query results against ground truth SQL query results."""
         start_time = time.time()
 
         # 1. Execute queries
-        gt_columns, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-        pred_columns, pred_rows = self.query_executor.execute_query(predicted_sql)
+        gt_columns, gt_rows = self.db_handler.run_query(ground_truth_sql)
+        pred_columns, pred_rows = self.db_handler.run_query(predicted_sql)
 
         # Check for query execution failure - return zeros for all metrics if either query failed
         if not gt_columns or not pred_columns:
@@ -169,8 +169,8 @@ class SQLResultEvaluator:
         """
         Execute both SQL queries and return the results as pandas DataFrames for inspection.
         """
-        gt_columns, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-        pred_columns, pred_rows = self.query_executor.execute_query(predicted_sql)
+        gt_columns, gt_rows = self.db_handler.run_query(ground_truth_sql)
+        pred_columns, pred_rows = self.db_handler.run_query(predicted_sql)
 
         # Create DataFrames
         gt_df = pd.DataFrame(gt_rows, columns=gt_columns)
@@ -180,12 +180,11 @@ class SQLResultEvaluator:
 
 if __name__ == "__main__":
     # Example usage
-    db_path = "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"
-    executor = SQLiteQueryExecutor(db_path)
-    evaluator = SQLResultEvaluator(executor)
+    db_params = {"dbms": DBMS.SQLITE, "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"}
+    evaluator = SQLResultEvaluator(db_params)
 
     predicted_sql = """
-    SELECT T3.City
+    SELECT T3.Phone
     FROM satscores T1 
     JOIN schools T3 ON T1.cds = T3.CDSCode 
     WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
