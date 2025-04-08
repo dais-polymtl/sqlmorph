@@ -1,3 +1,4 @@
+import os
 import time
 from collections import Counter
 
@@ -6,17 +7,26 @@ import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cosine
 
-from utils.embedding_calculator import EmbeddingCalculator
-from utils.logger import Logger
-from utils.query_executor import QueryExecutor, SQLiteQueryExecutor
+from src.core.database import DatabaseHandler, DBMS
+from src.core.logger import Logger
+from src.core.model_manager import ModelManager, ModelProvider, ModelType, OpenAIModel, OllamaModel, HuggingFaceModel
 
 logger = Logger(__name__)
 
 
 class SQLResultEvaluator:
-    def __init__(self, query_executor: QueryExecutor):
-        self.query_executor = query_executor
-        self.embedding_calculator = EmbeddingCalculator()
+    def __init__(
+            self,
+            db_params: dict,
+            embedding_model: OpenAIModel | OllamaModel | HuggingFaceModel,
+    ):
+        self.db_handler = DatabaseHandler(dbms=db_params["dbms"], connection_params=db_params)
+        self.embedding_model = ModelManager.create_model(
+            model_provider=ModelProvider.OPENAI,
+            model_type=ModelType.EMBEDDING,
+            model_name=embedding_model,
+            openai_api_key=os.getenv("OPENAI_API_KEY", None),
+        )
 
     def evaluate(self, predicted_sql: str, ground_truth_sql: str):
         """
@@ -26,8 +36,8 @@ class SQLResultEvaluator:
         start_time = time.time()
 
         # 1. Execute queries
-        gt_columns, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-        pred_columns, pred_rows = self.query_executor.execute_query(predicted_sql)
+        gt_columns, gt_rows = self.db_handler.run_query(ground_truth_sql)
+        pred_columns, pred_rows = self.db_handler.run_query(predicted_sql)
 
         # Check for query execution failure - return zeros for all metrics if either query failed
         if not gt_columns or not pred_columns:
@@ -221,7 +231,7 @@ class SQLResultEvaluator:
                 text += f"Sample values: {', '.join(data['top_values'])}"
 
             # Generate embedding
-            embedding = self.embedding_calculator.get_text_embedding(text)
+            embedding = self.embedding_model.get_embedding(text)
             embeddings[col] = embedding
 
         return embeddings
@@ -261,8 +271,8 @@ class SQLResultEvaluator:
 
     def get_dataframes(self, predicted_sql: str, ground_truth_sql: str):
         """Execute both SQL queries and return the results as pandas DataFrames for inspection."""
-        gt_columns, gt_rows = self.query_executor.execute_query(ground_truth_sql)
-        pred_columns, pred_rows = self.query_executor.execute_query(predicted_sql)
+        gt_columns, gt_rows = self.db_handler.run_query(ground_truth_sql)
+        pred_columns, pred_rows = self.db_handler.run_query(predicted_sql)
 
         # Create DataFrames
         gt_df = pd.DataFrame(gt_rows, columns=gt_columns)
@@ -273,9 +283,8 @@ class SQLResultEvaluator:
 
 if __name__ == "__main__":
     # Example usage
-    db_path = "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"
-    executor = SQLiteQueryExecutor(db_path)
-    evaluator = SQLResultEvaluator(executor)
+    db_params = {"dbms": DBMS.SQLITE, "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite"}
+    evaluator = SQLResultEvaluator(db_params=db_params, embedding_model=OpenAIModel.TEXT_EMBEDDING_3_SMALL)
 
     predicted_sql = """
     SELECT T3.Phone AS P, T3.City AS SHA
