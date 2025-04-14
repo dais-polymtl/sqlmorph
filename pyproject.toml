@@ -8,6 +8,7 @@ dependencies = [
     "duckdb>=1.2.1",
     "func-timeout>=4.3.5",
     "jinja2>=3.1.5",
+    "loguru>=0.7.3",
     "matplotlib>=3.10.0",
     "networkx>=3.4.2",
     "notebook>=7.3.2",
@@ -26,8 +27,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "black>=25.1.0",
     "pre-commit>=4.1.0",
-    "loguru>=0.7.3",
+    "ruff>=0.11.5",
 ]
 
 [build-system]
