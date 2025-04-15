@@ -35,7 +35,7 @@ class DuckDBAdapter(BaseAdapter):
         try:
             cursor = self.connection.cursor()
             cursor.execute(query)
-            logger.log("info", "QUERY_EXECUTED", {"query": query})
+            logger.log("info", "QUERY_EXECUTED", {"query": " ".join(query.split())})
 
             if return_cursor:
                 return cursor
@@ -44,7 +44,11 @@ class DuckDBAdapter(BaseAdapter):
             rows = cursor.fetchall()
             return column_names, rows
         except Exception as e:
-            logger.log("error", "QUERY_EXECUTION_FAILED", {"query": query, "error": str(e)})
+            logger.log(
+                "error",
+                "QUERY_EXECUTION_FAILED",
+                {"query": " ".join(query.split()), "error": str(e)},
+            )
             return None
 
     def close_connection(self):
