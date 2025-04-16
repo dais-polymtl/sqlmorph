@@ -28,10 +28,6 @@ class SQLiteAdapter(BaseAdapter):
 
     def run_query(self, query, return_cursor=False):
         """Execute a query. If return_cursor is True, return the cursor; else return (column_names, rows)"""
-        if not self.connection:
-            logger.log("warning", "QUERY_ATTEMPTED_WITH_NO_CONNECTION")
-            return None
-
         try:
             cursor = self.connection.cursor()
             cursor.execute(query)
@@ -49,7 +45,7 @@ class SQLiteAdapter(BaseAdapter):
                 "QUERY_EXECUTION_FAILED",
                 {"query": " ".join(query.split()), "error": str(e)},
             )
-            return None
+            return e
 
     def close_connection(self):
         """Close the SQLite connection."""

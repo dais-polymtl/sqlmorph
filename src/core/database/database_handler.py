@@ -16,6 +16,7 @@ ADAPTERS = {
     DBMS.DUCKDB: DuckDBAdapter,
 }
 
+
 class DatabaseHandler:
     def __init__(self, dbms: DBMS, connection_params: dict):
         """
@@ -27,7 +28,9 @@ class DatabaseHandler:
         self.adapter_class = ADAPTERS.get(dbms)
 
         if not self.adapter_class:
-            logger.log("error", "UNSUPPORTED_DBMS_BACKEND", {"DBMS_BACKEND": dbms.value})
+            logger.log(
+                "error", "UNSUPPORTED_DBMS_BACKEND", {"DBMS_BACKEND": dbms.value}
+            )
             raise ValueError(f"Unsupported database: {dbms.value}")
 
         # Instantiate the appropriate adapter and connect immediately
@@ -39,7 +42,11 @@ class DatabaseHandler:
         try:
             self.adapter.connect()
         except Exception as e:
-            logger.log("error", "CONNECTION_FAILED", {"DBMS_BACKEND": self.dbms.value, "error": str(e)})
+            logger.log(
+                "error",
+                "CONNECTION_FAILED",
+                {"DBMS_BACKEND": self.dbms.value, "error": str(e)},
+            )
             raise e
 
     def is_connection_alive(self):
@@ -57,10 +64,6 @@ class DatabaseHandler:
 
     def run_query(self, query, return_cursor=False):
         """Run a query through the selected adapter."""
-        if not self.adapter:
-            logger.log("warning", "QUERY_ATTEMPTED_WITH_NO_CONNECTION")
-            return None
-
         return self.adapter.run_query(query, return_cursor)
 
     def close_connection(self):

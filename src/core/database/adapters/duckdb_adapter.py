@@ -28,10 +28,6 @@ class DuckDBAdapter(BaseAdapter):
 
     def run_query(self, query, return_cursor=False):
         """Execute a query. If return_cursor is True, return the cursor; else return the fetched results."""
-        if not self.connection:
-            logger.log("warning", "QUERY_ATTEMPTED_WITH_NO_CONNECTION")
-            return None
-
         try:
             cursor = self.connection.cursor()
             cursor.execute(query)
@@ -49,7 +45,7 @@ class DuckDBAdapter(BaseAdapter):
                 "QUERY_EXECUTION_FAILED",
                 {"query": " ".join(query.split()), "error": str(e)},
             )
-            return None
+            raise e
 
     def close_connection(self):
         """Close the DuckDB connection."""
