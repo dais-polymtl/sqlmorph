@@ -20,11 +20,12 @@ def execute_query(context):
     """
     Execute the SQL queries and store the results in the context.
     """
-    # Initialize database handler
+
     db_handler = DatabaseHandler(
         dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
     )
 
+    # TODO: Fix raising error in the database handler
     # Execute ground truth and predicted queries
     gt_columns, gt_rows = db_handler.run_query(context["ground_truth_sql"])
     pred_columns, pred_rows = db_handler.run_query(context["predicted_sql"])
@@ -61,15 +62,11 @@ def execute_query(context):
         )
         return context
 
-    # Binary execution accuracy - only true if columns and rows match exactly
-    ex_value = (
-        1
-        if (set(gt_columns) == set(pred_columns) and set(gt_rows) == set(pred_rows))
-        else 0
-    )
+    # Binary execution accuracy - only true if rows match exactly
+    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
     # Store metrics in the metrics dictionary
-    context["metrics"]["EX"] = ex_value
+    context["metrics"]["EX"] = ex
 
     # Update context with query results
     context.update(

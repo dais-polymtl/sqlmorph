@@ -19,6 +19,7 @@ def execute_query(context):
         dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
     )
 
+    # TODO: Fix raising error in the database handler
     try:
         # Execute the SQL queries
         gt_columns, gt_rows = db_handler.run_query(context["ground_truth_sql"])
@@ -87,22 +88,14 @@ def match_columns(context):
     ]
 
     # Calculate binary execution accuracy
-    # TODO: ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
-    ex = (
-        1
-        if (
-            set(gt_columns) == set(pred_columns)
-            and set(context["gt_rows"]) == set(context["pred_rows"])
-        )
-        else 0
-    )
+    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
     context.update(
         {
             "common_cols": common_cols,
             "gt_common_indices": gt_common_indices,
             "pred_common_indices": pred_common_indices,
-            "ex": ex,
+            "EX": ex,
         }
     )
 
@@ -167,7 +160,7 @@ def assign_metrics(context):
     matched_cells = context["matched_cells"]
     g_cells = context["ground_truth_cells"]
     p_cells = context["predicted_cells"]
-    ex = context["ex"]
+    ex = context["EX"]
 
     # Calculate time taken
     context["time_taken"] = time.time() - context["start_time"]
@@ -260,9 +253,7 @@ def run_evaluation_pipeline(
     match_rows(context)
     assign_metrics(context)
 
-    dump_logs(context, log_files_dir=log_files_dir)
-
-    return context
+    dump_logs(context, log_files_dir)
 
 
 if __name__ == "__main__":
