@@ -66,9 +66,9 @@ def analyze_graph(
                     "component_num_nodes": num_nodes,
                     "component_num_edges": num_edges,
                     "component_avg_clustering": avg_clustering,
-                    "component_diameter": round(diameter, 3)
-                    if diameter != float("inf")
-                    else "inf",
+                    "component_diameter": (
+                        round(diameter, 3) if diameter != float("inf") else "inf"
+                    ),
                     "component_diameter_nodes": diameter_nodes,
                 }
             )

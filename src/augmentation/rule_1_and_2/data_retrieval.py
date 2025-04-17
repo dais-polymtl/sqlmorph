@@ -1,4 +1,3 @@
-import os
 import pickle
 from pathlib import Path
 
@@ -15,9 +14,9 @@ def retrieve_all_dev_patterns(folder_path):
     """
     folder = Path(folder_path)
     all_subgraphs = []
-    for file_name in folder.glob('join_patterns_*.pkl'):
+    for file_name in folder.glob("join_patterns_*.pkl"):
         try:
-            with file_name.open('rb') as f:
+            with file_name.open("rb") as f:
                 join_patterns = pickle.load(f)
                 # subgraphs = [join_pattern['subgraph'] for join_pattern in join_patterns]
                 # all_subgraphs.extend(subgraphs)
@@ -38,6 +37,6 @@ def load_schema(schema_path):
     Returns:
         nx.Graph: The loaded schema graph.
     """
-    with open(schema_path, 'rb') as f:
+    with open(schema_path, "rb") as f:
         schema = pickle.load(f)
     return schema

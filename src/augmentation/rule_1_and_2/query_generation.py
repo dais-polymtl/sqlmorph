@@ -1,8 +1,6 @@
-import pandas as pd
 import sqlglot
 from sqlglot import expressions as exp
 import networkx as nx
-import sqlite3
 
 
 def get_table_data(schema, node_name):
@@ -265,6 +263,7 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
         "filtering_columns": filtering_columns_with_tables,
     }
 
+
 # def modify_rule_1_queries(pattern):
 #     extended_subgraph = pattern['extended_subgraph']
 #     equivalent_queries = pattern['equivalent_queries']
@@ -288,7 +287,7 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
 #         if isinstance(parsed_old_query, exp.Select):
 #             if "joins" not in parsed_old_query.args:
 #                 parsed_old_query.args["joins"] = []
-            
+
 #             parsed_added_table = exp.Table(
 #                     this=exp.Identifier(this=added_table, quoted=False),
 #                     alias=exp.TableAlias(this=exp.Identifier(this=added_alias, quoted=False))
@@ -311,19 +310,20 @@ def generate_inner_join_query_with_test(schema, pattern, db_id, df):
 #         query['new_query'] = new_query
 #     return pattern
 
+
 def modify_rule_1_queries(pattern):
-    extended_subgraph = pattern['extended_subgraph']
-    equivalent_queries = pattern['equivalent_queries']
-    old_subgraph = pattern['subgraph']
+    extended_subgraph = pattern["extended_subgraph"]
+    equivalent_queries = pattern["equivalent_queries"]
+    old_subgraph = pattern["subgraph"]
     added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
-    
+
     added_joins = []
     for edge in extended_subgraph.edges(data=True):
-        if edge[2]['color'] == 'red':
-            added_joins.extend(edge[2]['label'].split(";"))
+        if edge[2]["color"] == "red":
+            added_joins.extend(edge[2]["label"].split(";"))
 
     for query in equivalent_queries:
-        old_query = query['SQL']
+        old_query = query["SQL"]
 
         # Step 1: Track all tables and their aliases
         old_query_tables = {}
@@ -336,14 +336,16 @@ def modify_rule_1_queries(pattern):
 
         # Step 2: Track assigned aliases for new table
         added_table_aliases = []
-        
+
         # Step 3: Parse and modify the old query
-        parsed_old_query = sqlglot.parse_one(old_query, dialect='mysql')
+        parsed_old_query = sqlglot.parse_one(old_query, dialect="mysql")
         if isinstance(parsed_old_query, exp.Select):
             if "joins" not in parsed_old_query.args:
                 parsed_old_query.args["joins"] = []
-            
-            alias_counter = 1  # Counter for dynamically generating aliases for the new table
+
+            alias_counter = (
+                1  # Counter for dynamically generating aliases for the new table
+            )
 
             for join in added_joins:
                 left, right = join.split("=")
@@ -362,11 +364,13 @@ def modify_rule_1_queries(pattern):
 
                 # Assign correct aliases for left and right tables
                 left_alias = (
-                    new_alias if left_table.lower() == added_table.lower()
+                    new_alias
+                    if left_table.lower() == added_table.lower()
                     else old_query_tables.get(left_table.lower(), [left_table])[0]
                 )
                 right_alias = (
-                    new_alias if right_table.lower() == added_table.lower()
+                    new_alias
+                    if right_table.lower() == added_table.lower()
                     else old_query_tables.get(right_table.lower(), [right_table])[0]
                 )
 
@@ -374,16 +378,20 @@ def modify_rule_1_queries(pattern):
                 join_expr = exp.Join(
                     this=exp.Table(
                         this=exp.Identifier(this=added_table, quoted=False),
-                        alias=exp.TableAlias(this=exp.Identifier(this=left_alias, quoted=False))
+                        alias=exp.TableAlias(
+                            this=exp.Identifier(this=left_alias, quoted=False)
+                        ),
                     ),
-                    on=exp.column(left_col, table=left_alias).eq(exp.column(right_col, table=right_alias)),
-                    kind="INNER"
+                    on=exp.column(left_col, table=left_alias).eq(
+                        exp.column(right_col, table=right_alias)
+                    ),
+                    kind="INNER",
                 )
 
                 parsed_old_query.args["joins"].append(join_expr)
 
         # Step 4: Convert back to SQL
         new_query = parsed_old_query.sql()
-        query['new_query'] = new_query
+        query["new_query"] = new_query
 
     return pattern
