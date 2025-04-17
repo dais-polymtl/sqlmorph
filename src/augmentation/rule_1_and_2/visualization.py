@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 
 
-def display_and_save_subgraph(schema, subgraph, subgraph_number, rule, time_period, db_id, output_base_dir):
+def display_and_save_subgraph(
+    schema, subgraph, subgraph_number, rule, time_period, db_id, output_base_dir
+):
     """
     Display and save a subgraph within the main schema.
 
@@ -19,44 +21,57 @@ def display_and_save_subgraph(schema, subgraph, subgraph_number, rule, time_peri
     """
     # Create the directory structure: images/rule_x/db_id/pre_rule or post_rule
     base_dir = os.path.join(output_base_dir, rule, db_id, time_period)
-    os.makedirs(base_dir, exist_ok=True)  # Ensure the directory exists even if the subgraph is None or empty
+    os.makedirs(
+        base_dir, exist_ok=True
+    )  # Ensure the directory exists even if the subgraph is None or empty
 
     # Create a figure for the plot
     plt.figure(figsize=(10, 10))
 
     # Draw the entire schema in light gray
     pos = nx.spring_layout(schema)  # Node positions using spring layout
-    nx.draw(schema, pos, with_labels=True, node_color='lightgray', edge_color='black',
-            node_size=1000, font_size=10)
+    nx.draw(
+        schema,
+        pos,
+        with_labels=True,
+        node_color="lightgray",
+        edge_color="black",
+        node_size=1000,
+        font_size=10,
+    )
 
     # Check if the subgraph is None or has nodes
-    if subgraph is not None and subgraph.number_of_nodes() > 0:  # Draw the subgraph only if it contains nodes
+    if (
+        subgraph is not None and subgraph.number_of_nodes() > 0
+    ):  # Draw the subgraph only if it contains nodes
         # Draw the subgraph nodes and edges
-        nx.draw_networkx_nodes(subgraph, pos, node_color='lightblue', node_size=1000)
-        nx.draw_networkx_edges(subgraph, pos, edge_color='blue', width=2)
+        nx.draw_networkx_nodes(subgraph, pos, node_color="lightblue", node_size=1000)
+        nx.draw_networkx_edges(subgraph, pos, edge_color="blue", width=2)
 
         # Create edge labels for the subgraph, fallback to schema if needed
         edge_labels = {
-            (u, v): edge_data.get('label', schema[u][v].get('label', 'No Label'))
+            (u, v): edge_data.get("label", schema[u][v].get("label", "No Label"))
             for u, v, edge_data in subgraph.edges(data=True)
         }
 
         # Draw the edge labels
-        nx.draw_networkx_edge_labels(subgraph, pos, edge_labels=edge_labels, font_color='red', font_size=7)
+        nx.draw_networkx_edge_labels(
+            subgraph, pos, edge_labels=edge_labels, font_color="red", font_size=7
+        )
 
     # Add title indicating the subgraph number
-    plt.title(f'Subgraph {subgraph_number}')
+    plt.title(f"Subgraph {subgraph_number}")
 
     # Generate a unique filename using timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    image_filename = f'subgraph_{subgraph_number}_{timestamp}.png'
+    image_filename = f"subgraph_{subgraph_number}_{timestamp}.png"
     image_path = os.path.join(base_dir, image_filename)
 
     # Save the image
     plt.savefig(image_path)
     plt.close()  # Close the plot to free up memory
 
-    print(f'Subgraph {subgraph_number} saved at: {image_path}')
+    print(f"Subgraph {subgraph_number} saved at: {image_path}")
 
 
 def save_pre_rule_subgraphs(schema, subgraphs, rule_name, db_id, output_base_dir):
@@ -71,16 +86,16 @@ def save_pre_rule_subgraphs(schema, subgraphs, rule_name, db_id, output_base_dir
     - output_base_dir (str): Base directory to save images.
     """
     # subgraphs_sorted is a list of dicts, each dict having a 'subgraph' key, I wanna sort the list of dicts based on the number of nodes in the 'subgraph' key
-    
+
     # subgraphs_sorted = sorted(subgraphs, key=lambda x: x["subgraph"].number_of_nodes())  # Sort by number of nodes
-    subgraphs_sorted = sorted(subgraphs, key=lambda x: x['subgraph'].number_of_nodes())  
+    subgraphs_sorted = sorted(subgraphs, key=lambda x: x["subgraph"].number_of_nodes())
     for i, subgraph in enumerate(subgraphs_sorted, start=1):
         display_and_save_subgraph(
             schema=schema,
-            subgraph=subgraph['subgraph'],
+            subgraph=subgraph["subgraph"],
             subgraph_number=i,
             rule=rule_name,
-            time_period='pre_rule',
+            time_period="pre_rule",
             db_id=db_id,
-            output_base_dir=output_base_dir
+            output_base_dir=output_base_dir,
         )

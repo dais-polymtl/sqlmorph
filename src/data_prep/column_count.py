@@ -58,9 +58,9 @@ def parse_sql(sql, tables):
                 table_name = alias_map.get(table_alias, "unknown")
                 projections[(table_name, column_name)] += 1
             else:
-                projections[(None, projection.sql())] += (
-                    1  # For operations like MAX(), SUM()
-                )
+                projections[
+                    (None, projection.sql())
+                ] += 1  # For operations like MAX(), SUM()
 
     # Extract filtering columns from WHERE clause
     where_clause = parsed.find(sqlglot.expressions.Where)

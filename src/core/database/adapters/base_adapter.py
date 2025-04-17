@@ -1,5 +1,6 @@
 import abc
 
+
 class BaseAdapter(abc.ABC):
     """
     Abstract base class for database adapters.

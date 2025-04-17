@@ -8,7 +8,9 @@ load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
-def apply_synonym_replacement(db_id, question, evidence, sql_query, candidate_table, components):
+def apply_synonym_replacement(
+    db_id, question, evidence, sql_query, candidate_table, components
+):
     """Uses GPT-4o to replace references to candidate tables in questions and evidence using synonyms."""
 
     prompt = f"""
@@ -39,14 +41,13 @@ New Question: modified question
 New Evidence: modified evidence (or empty string if none)
 """
 
-    messages = [{"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt},
+    ]
 
     response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        max_tokens=300,
-        temperature=0.7
+        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
     )
 
     generated_text = response.choices[0].message.content.strip()
@@ -69,15 +70,22 @@ def generate_synonym_replacement_queries(db_id, subgraphs):
     print(f"Generating new questions for {db_id}...")
 
     for subgraph in subgraphs:
-        for query in subgraph['equivalent_queries']:
+        for query in subgraph["equivalent_queries"]:
             new_question, new_evidence = apply_synonym_replacement(
-                db_id, query['question'], query['evidence'], query['SQL'],
-                subgraph['central_table'], subgraph['components']
+                db_id,
+                query["question"],
+                query["evidence"],
+                query["SQL"],
+                subgraph["central_table"],
+                subgraph["components"],
             )
 
             # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph['components']):
-                query['new_question'], query['new_evidence'] = new_question, new_evidence
+            if not any(comp in new_question.lower() for comp in subgraph["components"]):
+                query["new_question"], query["new_evidence"] = (
+                    new_question,
+                    new_evidence,
+                )
                 rewritten_queries.append(query)
 
     return rewritten_queries
@@ -92,7 +100,9 @@ def hide_tables_with_synonym_replacement(data):
     }
 
 
-def apply_backtranslation(db_id, question, evidence, sql_query, candidate_table, components):
+def apply_backtranslation(
+    db_id, question, evidence, sql_query, candidate_table, components
+):
     """Uses GPT-4o to perform back translation with synonym replacement."""
 
     prompt = f"""
@@ -122,14 +132,13 @@ Question in English: [modified question]
 Evidence in English: [modified evidence] (or empty string if none)
 """
 
-    messages = [{"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt}]
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt},
+    ]
 
     response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        max_tokens=300,
-        temperature=0.7
+        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
     )
 
     generated_text = response.choices[0].message.content.strip()
@@ -152,15 +161,22 @@ def generate_backtranslated_queries(db_id, subgraphs):
     print(f"Generating backtranslated questions for {db_id}...")
 
     for subgraph in subgraphs:
-        for query in subgraph['equivalent_queries']:
+        for query in subgraph["equivalent_queries"]:
             new_question, new_evidence = apply_backtranslation(
-                db_id, query['question'], query['evidence'], query['SQL'],
-                subgraph['central_table'], subgraph['components']
+                db_id,
+                query["question"],
+                query["evidence"],
+                query["SQL"],
+                subgraph["central_table"],
+                subgraph["components"],
             )
 
             # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph['components']):
-                query['new_question'], query['new_evidence'] = new_question, new_evidence
+            if not any(comp in new_question.lower() for comp in subgraph["components"]):
+                query["new_question"], query["new_evidence"] = (
+                    new_question,
+                    new_evidence,
+                )
                 rewritten_queries.append(query)
 
     return rewritten_queries
@@ -175,7 +191,9 @@ def hide_tables_with_backtranslation(data):
     }
 
 
-def augment_with_contextual_synonyms(db_id, question, evidence, sql_query, candidate_table, components):
+def augment_with_contextual_synonyms(
+    db_id, question, evidence, sql_query, candidate_table, components
+):
     """Uses GPT-4o to perform contextual augmentation by replacing table references with synonyms."""
 
     prompt = f"""
@@ -206,14 +224,11 @@ New Evidence: [modified evidence] (or empty string if none)
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt}
+        {"role": "user", "content": prompt},
     ]
 
     response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        max_tokens=300,
-        temperature=0.7
+        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
     )
 
     generated_text = response.choices[0].message.content.strip()
@@ -236,15 +251,22 @@ def generate_contextually_augmented_queries(db_id, subgraphs):
     print(f"Generating contextually augmented questions for {db_id}...")
 
     for subgraph in subgraphs:
-        for query in subgraph['equivalent_queries']:
+        for query in subgraph["equivalent_queries"]:
             new_question, new_evidence = augment_with_contextual_synonyms(
-                db_id, query['question'], query['evidence'], query['SQL'],
-                subgraph['central_table'], subgraph['components']
+                db_id,
+                query["question"],
+                query["evidence"],
+                query["SQL"],
+                subgraph["central_table"],
+                subgraph["components"],
             )
 
             # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph['components']):
-                query['new_question'], query['new_evidence'] = new_question, new_evidence
+            if not any(comp in new_question.lower() for comp in subgraph["components"]):
+                query["new_question"], query["new_evidence"] = (
+                    new_question,
+                    new_evidence,
+                )
                 rewritten_queries.append(query)
 
     return rewritten_queries

@@ -17,9 +17,9 @@ def retrieve_all_dev_patterns(folder_path):
     folder = Path(folder_path)
     all_subgraphs = []
 
-    for file_name in folder.glob('join_patterns_*.pkl'):
+    for file_name in folder.glob("join_patterns_*.pkl"):
         try:
-            with file_name.open('rb') as f:
+            with file_name.open("rb") as f:
                 join_patterns = pickle.load(f)
                 if isinstance(join_patterns, list):
                     all_subgraphs.extend(join_patterns)
@@ -44,7 +44,7 @@ def split_queries(database_subgraphs, train_ratio=0.6, dev_ratio=0.2):
     all_dev_queries = []
     for subgraphs in database_subgraphs.values():
         for subgraph in subgraphs:
-            all_dev_queries.extend(subgraph.get('equivalent_queries', []))
+            all_dev_queries.extend(subgraph.get("equivalent_queries", []))
 
     np.random.shuffle(all_dev_queries)
 
@@ -52,8 +52,8 @@ def split_queries(database_subgraphs, train_ratio=0.6, dev_ratio=0.2):
     dev_size = int(dev_ratio * len(all_dev_queries))
 
     train_queries = all_dev_queries[:train_size]
-    dev_queries = all_dev_queries[train_size:train_size + dev_size]
-    test_queries = all_dev_queries[train_size + dev_size:]
+    dev_queries = all_dev_queries[train_size : train_size + dev_size]
+    test_queries = all_dev_queries[train_size + dev_size :]
 
     return train_queries, dev_queries, test_queries
 
@@ -73,12 +73,16 @@ def filter_subgraphs(database_subgraphs, queries_list):
 
     for db_id, subgraphs in database_subgraphs.items():
         for subgraph in subgraphs:
-            equivalent_queries = [q for q in subgraph.get('equivalent_queries', []) if q in queries_list]
+            equivalent_queries = [
+                q for q in subgraph.get("equivalent_queries", []) if q in queries_list
+            ]
             if equivalent_queries:
-                filtered_subgraphs[db_id].append({
-                    'subgraph': subgraph['subgraph'],
-                    'pattern_signature': subgraph['pattern_signature'],
-                    'equivalent_queries': equivalent_queries
-                })
+                filtered_subgraphs[db_id].append(
+                    {
+                        "subgraph": subgraph["subgraph"],
+                        "pattern_signature": subgraph["pattern_signature"],
+                        "equivalent_queries": equivalent_queries,
+                    }
+                )
 
     return filtered_subgraphs

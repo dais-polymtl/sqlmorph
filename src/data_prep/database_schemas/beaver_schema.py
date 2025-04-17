@@ -42,7 +42,9 @@ class Beaver_Schema:
             table_name = table_info["table_name_original"]
             column_names_original = table_info["column_names_original"]
             column_types = table_info["column_types"]
-            primary_keys = table_info.get("primary_key", [])  # Default to empty list if missing
+            primary_keys = table_info.get(
+                "primary_key", []
+            )  # Default to empty list if missing
 
             # Create Column objects
             columns = [
@@ -59,14 +61,16 @@ class Beaver_Schema:
             table = Table(table_name, columns, table_primary_keys)
             self.tables.append(table)
 
-            # Process foreign keys 
+            # Process foreign keys
         for table_key, table_info in relevant_data.items():
             table_name = table_info["table_name_original"]
             foreign_keys = table_info.get("foreign_key", [])
 
             for fk_info in foreign_keys:
                 referencing_column_name = fk_info["column_name"]
-                referenced_table_name = fk_info["referenced_table_name"].split("#sep#")[-1].strip()
+                referenced_table_name = (
+                    fk_info["referenced_table_name"].split("#sep#")[-1].strip()
+                )
                 referenced_column_name = fk_info["referenced_column_name"].strip()
                 referencing_column = next(
                     (
@@ -81,13 +85,13 @@ class Beaver_Schema:
                 referenced_column = next(
                     (
                         col
-                            for table in self.tables
-                            for col in table.columns
-                            if table.table_name == referenced_table_name
-                            and col.column_name == referenced_column_name
-                        ),
-                        None,
-                    )
+                        for table in self.tables
+                        for col in table.columns
+                        if table.table_name == referenced_table_name
+                        and col.column_name == referenced_column_name
+                    ),
+                    None,
+                )
 
                 if referencing_column and referenced_column:
                     fk = ForeignKey(
@@ -97,7 +101,6 @@ class Beaver_Schema:
                         referenced_column,
                     )
                     self.foreign_keys.append(fk)
-                
 
     def __str__(self) -> str:
         schema_description = f"The database schema '{self.database_name}' consists of {len(self.tables)} tables:\n"
@@ -180,7 +183,7 @@ class Beaver_Schema:
                             edge_labels[edge_key].append(edge_label)
                         else:
                             edge_labels[edge_key[::-1]].append(edge_label)
-        
+
         for (table1, table2), labels in edge_labels.items():
             combined_label = "; ".join(labels)
             G.add_edge(table1, table2, label=combined_label)
@@ -218,15 +221,15 @@ class Beaver_Schema:
         plt.savefig(image_file_path)
         plt.close()
 
- 
+
 def update_dw_graph(output_dir):
     pickle_file_path = os.path.join(output_dir, "pickles", "dw_graph.pkl")
     with open(pickle_file_path, "rb") as file:
         G = pickle.load(file)
-    
+
     with open("dw_join_keys.json", "r") as file:
         dw_joins = json.load(file)
-    
+
     edge_labels = nx.get_edge_attributes(G, "label")
     for join_pair in dw_joins:
         table1, key1 = join_pair[0].split(".")
@@ -235,7 +238,7 @@ def update_dw_graph(output_dir):
         # Skip self-joins (where both tables are the same)
         if table1 == table2:
             continue
-        
+
         # Define the edge key and label
         edge_key_1 = (table1, table2)
         edge_key_2 = (table2, table1)
@@ -244,16 +247,16 @@ def update_dw_graph(output_dir):
         # Check if the reversed edge already exists
         if edge_key_2 in edge_labels:
             continue  # Skip this iteration if reversed edge exists
-        
+
         if edge_key_1 in edge_labels:
             edge_labels[edge_key_1] += "; " + edge_label
         else:
             edge_labels[edge_key_1] = edge_label
         G.add_edge(table1, table2, label=edge_labels[edge_key_1])
-    
+
     with open(pickle_file_path, "wb") as file:
         pickle.dump(G, file)
-    
+
     image_file_path = os.path.join(output_dir, "images", "dw_graph.png")
     plt.figure(figsize=(12, 12))
     pos = nx.spring_layout(G, seed=42)
@@ -272,6 +275,7 @@ def update_dw_graph(output_dir):
     plt.savefig(image_file_path)
     plt.close()
 
+
 def main():
     with open("dev_tables.json", "r") as file:
         data = json.load(file)
@@ -280,7 +284,7 @@ def main():
             database_name = db_info.get("db_id", "")
             schema = Beaver_Schema(database_name, "dev_tables.json")
             schema.save_graph_and_image("beaver_graphs")
-    
+
     update_dw_graph("beaver_graphs")
 
 
