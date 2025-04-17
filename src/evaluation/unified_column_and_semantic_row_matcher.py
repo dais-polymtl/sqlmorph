@@ -31,6 +31,7 @@ def execute_query(context):
         dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
     )
 
+    # TODO: Fix raising error in the database handler
     try:
         # Execute both SQL queries
         pred_cols, pred_rows = db_handler.run_query(context["predicted_sql"])
@@ -303,7 +304,6 @@ def assign_metrics(context):
 
         metrics = {"EXP": EXP, "EXR": EXR, "F1": F1, "EX": ex}
 
-    # Log evaluation metrics
     logger.log(
         "INFO",
         "EVALUATION_COMPLETE",
@@ -316,7 +316,6 @@ def assign_metrics(context):
         },
     )
 
-    # Store metrics in context
     context["metrics"] = metrics
 
 
@@ -370,9 +369,6 @@ def run_eval_pipeline(
     """
     Run the complete SQL evaluation pipeline. Coordinates the four stages of evaluation and returns the context with all results.
     """
-    logger.log("info", f"{(os.path.basename(__file__)).upper()}_EVALUATION_STARTED")
-
-    # Initialize context
     context = {
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
@@ -382,17 +378,12 @@ def run_eval_pipeline(
         "has_error": False,
     }
 
-    # Execute pipeline stages
     execute_query(context)
-
-    if not context.get("has_error", False):
-        match_columns(context)
-        match_rows(context)
-        assign_metrics(context)
+    match_columns(context)
+    match_rows(context)
+    assign_metrics(context)
 
     dump_logs(context, log_file_dir)
-
-    return context
 
 
 if __name__ == "__main__":
@@ -421,7 +412,6 @@ if __name__ == "__main__":
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
     log_file_dir = ".data/evaluation_metrics_logs/_1_row_semantic_matcher/"
 
-    # Run evaluation and report results
     run_eval_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
