@@ -37,16 +37,8 @@ def execute_query(context):
         pred_cols, pred_rows = db_handler.run_query(context["predicted_sql"])
         gt_cols, gt_rows = db_handler.run_query(context["ground_truth_sql"])
 
-        # Compute binary execution accuracy (exact match of results)
-        # TODO: ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
-        ex = (
-            1
-            if (
-                sorted(pred_cols) == sorted(gt_cols)
-                and sorted(pred_rows) == sorted(gt_rows)
-            )
-            else 0
-        )
+        # Binary execution accuracy
+        ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
         context.update(
             {
