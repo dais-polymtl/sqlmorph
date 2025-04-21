@@ -1,104 +1,75 @@
 import os
-import pickle
 import json
+from pathlib import Path
+
+import networkx as nx
+
+from .llm_inference import (
+    generate_explicit_question,
+    generate_dev_set_like_question,
+    generate_evidence,
+    generate_new_extended_question,
+)
+from .graph_processing import calculate_subgraph_centrality, is_cyclic
+from .data_retrieval import load_schema
+from src.data_prep.database_schemas.bird_schema import BIRD_Schema
 
 
-def save_rule_data(rule_data, rule, folder, db_id):
-    """
-    Save rule data to a pickle file with the rule name appended.
-
-    Args:
-        rule_data (list): The rule data to save.
-        rule (str): The rule name, either 'rule_1' or 'rule_2'.
-        folder (str): The folder path to save the file.
-        db_id (str): The database ID.
-    """
-    # Create output file path with rule name
-    output_file = os.path.join(folder, f"{db_id}_outputs_{rule}.pkl")
-
-    # Save the list to a pickle file without modifying or adding extra fields
-    with open(output_file, "wb") as f:
-        pickle.dump(rule_data, f)
+def compute_graph_metrics(subgraph, schema_graph):
+    """Compute graph-based metrics."""
+    centrality = nx.degree_centrality(schema_graph)
+    return {
+        "num_nodes": subgraph.number_of_nodes(),
+        "num_connections": subgraph.number_of_edges(),
+        "cyclic": is_cyclic(subgraph),
+        "centrality_score": calculate_subgraph_centrality(subgraph, centrality),
+    }
 
 
-def process_rule_folder(
-    rule_folder,
+def get_schema_object(db_id):
+    """Load BIRD_Schema object."""
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    schema_data_file = project_root / "data" / "benchmarks" / "Bird" / "dev_tables.json"
+    return BIRD_Schema(db_id, schema_data_file)
+
+
+def write_outputs(json_output_file, sql_output_file, json_data, sql_queries):
+    """Save JSON and SQL output files."""
+    os.makedirs(os.path.dirname(json_output_file), exist_ok=True)
+    os.makedirs(os.path.dirname(sql_output_file), exist_ok=True)
+
+    with open(json_output_file, "w") as f_json:
+        json.dump(json_data, f_json, indent=4)
+
+    with open(sql_output_file, "w") as f_sql:
+        f_sql.write("\n".join(sql_queries))
+
+
+def save_new_queries(
+    rules_list,
     graph_data_folder,
-    rule_name,
     json_output_file,
     sql_output_file,
     question_type,
+    extension_type
 ):
-    """
-    Process and compute metrics for all databases in a rule folder.
-
-    Args:
-        rule_folder (str): Path to the folder containing rule pickle files.
-        graph_data_folder (str): Path to the folder containing graph data.
-        rule_name (str): Name of the rule ('rule_1' or 'rule_2').
-        json_output_file (str): Path to save the JSON output.
-        sql_output_file (str): Path to save the SQL output.
-        question_type (str): Type of question to generate ('explicit' or 'dev_set_like').
-    """
-    import networkx as nx  # Imported here to avoid circular dependencies
-    from .graph_processing import calculate_subgraph_centrality, is_cyclic
-    from .data_retrieval import load_schema
-
-    # Collect all pickle files in the folder
-    if rule_name == "rule_1":
-        files = [f for f in os.listdir(rule_folder) if f.endswith("outputs_rule_1.pkl")]
-    else:
-        files = [f for f in os.listdir(rule_folder) if f.endswith("outputs_rule_2.pkl")]
-
     global_rule_data = []
 
-    # Process each pickle file
-    for file in files:
-        # Extract db_id by removing '_outputs_rule_X.pkl'
-        if rule_name == "rule_1":
-            db_id = file.replace("_outputs_rule_1.pkl", "")
-        else:
-            db_id = file.replace("_outputs_rule_2.pkl", "")
-        schema_path = os.path.join(graph_data_folder, f"{db_id}_graph.pkl")
+    for rule_data in rules_list:
+        db_id = rule_data["db_id"]
+        schema_graph = load_schema(
+            os.path.join(graph_data_folder, f"{db_id}_graph.pkl")
+        )
+        metrics = compute_graph_metrics(rule_data["extended_subgraph"], schema_graph)
 
-        # Load the schema graph
-        schema = load_schema(schema_path)
+        global_rule_data.append(
+            {
+                "db_id": db_id,
+                "main_query": rule_data["graph_first"]["main_query"],
+                **metrics,
+            }
+        )
 
-        # Compute centrality for each node in the schema
-        centrality = nx.degree_centrality(schema)
-
-        # Load the rule data from pickle file
-        with open(os.path.join(rule_folder, file), "rb") as f:
-            data_list = pickle.load(f)
-
-        # Compute metrics for each subgraph in the pickle data
-        for data in data_list:
-            subgraph = data.get("subgraph", None)
-
-            # If there's no subgraph, skip this entry
-            if subgraph is None:
-                continue
-
-            num_nodes = subgraph["extended_subgraph"].number_of_nodes()
-            num_connections = subgraph["extended_subgraph"].number_of_edges()
-            cyclic = is_cyclic(subgraph["extended_subgraph"])
-            centrality_score = calculate_subgraph_centrality(
-                subgraph["extended_subgraph"], centrality
-            )
-
-            # Append relevant data to the global list, with metrics
-            global_rule_data.append(
-                {
-                    "db_id": db_id,
-                    "main_query": data["main_query"],
-                    "num_nodes": num_nodes,
-                    "num_connections": num_connections,
-                    "cyclic": cyclic,
-                    "centrality_score": centrality_score,
-                }
-            )
-
-    # Sort all data globally in descending order based on the subgraph metrics
     global_rule_data_sorted = sorted(
         global_rule_data,
         key=lambda x: (
@@ -107,123 +78,62 @@ def process_rule_folder(
             x["cyclic"],
             x["centrality_score"],
         ),
-        reverse=True,  # Sort from biggest to smallest
+        reverse=True,
     )
 
-    # Generate JSON and SQL files
-    json_data = []
-    sql_queries = []
+    json_data, sql_queries = [], []
 
     for idx, entry in enumerate(global_rule_data_sorted):
-        if question_type == "explicit":
-            question = ""
-            # question = generate_explicit_question(entry['main_query'])
-        if question_type == "dev_set_like":
-            question = ""
-            # question = generate_dev_set_like_question(entry['main_query'])
+        schema = get_schema_object(entry["db_id"])
+
+        if extension_type == "excluded":
+            question, evidence = "", ""
+
+        elif extension_type == "pruned":
+            if question_type == "explicit":
+                question = generate_explicit_question(entry["main_query"], schema=schema)
+                evidence = ""
+            elif question_type == "dev_set_like":
+                question = generate_dev_set_like_question(entry["main_query"], schema=schema)
+                evidence = generate_evidence(entry["main_query"], schema=schema, question=question)
+
         json_data.append(
             {
                 "question_id": idx,
                 "db_id": entry["db_id"],
-                "question": question,  # Placeholder
-                "evidence": "",  # Placeholder
+                "question": question,
+                "evidence": evidence,
                 "SQL": entry["main_query"],
-                "difficulty": "challenging",  # Default difficulty
+                "difficulty": "challenging",
             }
         )
         sql_queries.append(f"{entry['main_query']}\t{entry['db_id']}")
 
-    # Write JSON output
-    with open(json_output_file, "w") as json_file:
-        json.dump(json_data, json_file, indent=4)
-
-    # Write SQL output
-    with open(sql_output_file, "w") as sql_file:
-        sql_file.write("\n".join(sql_queries))
+    write_outputs(json_output_file, sql_output_file, json_data, sql_queries)
 
 
-def process_rule_folder_2nd_version(
-    rule_folder,
+def save_old_extended_queries(
+    rule_list,
     graph_data_folder,
-    rule_name,
     json_output_file,
     sql_output_file,
     query_type,
+    extension_type
 ):
-    """
-    Process and compute metrics for all databases in a rule folder.
-
-    Args:
-        rule_folder (str): Path to the folder containing rule pickle files.
-        graph_data_folder (str): Path to the folder containing graph data.
-        rule_name (str): Name of the rule ('rule_1' or 'rule_2').
-        json_output_file (str): Path to save the JSON output.
-        sql_output_file (str): Path to save the SQL output.
-        question_type (str): Type of question to generate ('explicit' or 'dev_set_like').
-    """
-    import networkx as nx  # Imported here to avoid circular dependencies
-    from .graph_processing import calculate_subgraph_centrality, is_cyclic
-    from .data_retrieval import load_schema
-
-    # Collect all pickle files in the folder
-    if rule_name == "rule_1_2nd_version":
-        files = [
-            f
-            for f in os.listdir(rule_folder)
-            if f.endswith("outputs_rule_1_2nd_version.pkl")
-        ]
-    else:
-        files = [
-            f
-            for f in os.listdir(rule_folder)
-            if f.endswith("outputs_rule_2_2nd_version.pkl")
-        ]
-
     global_rule_data = []
 
-    # Process each pickle file
-    for file in files:
-        # Extract db_id by removing '_outputs_rule_X.pkl'
-        if rule_name == "rule_1_2nd_version":
-            db_id = file.replace("_outputs_rule_1_2nd_version.pkl", "")
-        else:
-            db_id = file.replace("_outputs_rule_2_2nd_version.pkl", "")
-        schema_path = os.path.join(graph_data_folder, f"{db_id}_graph.pkl")
+    for rule_data in rule_list:
+        db_id = rule_data["db_id"]
+        schema_graph = load_schema(
+            os.path.join(graph_data_folder, f"{db_id}_graph.pkl")
+        )
+        metrics = compute_graph_metrics(rule_data["extended_subgraph"], schema_graph)
 
-        # Load the schema graph
-        schema = load_schema(schema_path)
-
-        # Compute centrality for each node in the schema
-        centrality = nx.degree_centrality(schema)
-
-        # Load the rule data from pickle file
-        with open(os.path.join(rule_folder, file), "rb") as f:
-            data_list = pickle.load(f)
-
-        # Compute metrics for each subgraph in the pickle data
-        for data in data_list:
-            # subgraph = data.get('subgraph', None)
-            num_nodes = data["extended_subgraph"].number_of_nodes()
-            num_connections = data["extended_subgraph"].number_of_edges()
-            cyclic = is_cyclic(data["extended_subgraph"])
-            centrality_score = calculate_subgraph_centrality(
-                data["extended_subgraph"], centrality
+        for query in rule_data["query_first"]:
+            global_rule_data.append(
+                {"db_id": db_id, "equivalent_query": query, **metrics}
             )
 
-            for query in data["equivalent_queries"]:
-                # Append relevant data to the global list, with metrics
-                global_rule_data.append(
-                    {
-                        "db_id": db_id,
-                        "num_nodes": num_nodes,
-                        "num_connections": num_connections,
-                        "cyclic": cyclic,
-                        "centrality_score": centrality_score,
-                        "equivalent_query": query,
-                    }
-                )
-
-    # Sort all data globally in descending order based on the subgraph metrics
     global_rule_data_sorted = sorted(
         global_rule_data,
         key=lambda x: (
@@ -232,39 +142,43 @@ def process_rule_folder_2nd_version(
             x["cyclic"],
             x["centrality_score"],
         ),
-        reverse=True,  # Sort from biggest to smallest
+        reverse=True,
     )
 
-    # Generate JSON and SQL files
-    json_data = []
-    sql_queries = []
+    json_data, sql_queries = [], []
 
-    for idx, element in enumerate(global_rule_data_sorted):
-        query = element["equivalent_query"]
-        if query_type == "original":
-            question = query["question"]
-            sql_query = query["SQL"]
-            # question = generate_explicit_question(entry['main_query'])
-        if query_type == "new":
-            question = ""
+    for idx, entry in enumerate(global_rule_data_sorted):
+        query = entry["equivalent_query"]
+        schema = get_schema_object(query["db_id"])
+
+        if extension_type == "excluded":
+            if query_type == "original":
+                question = query["question"]
+                sql_query = query["SQL"]
+            elif query_type == "new":
+                question = ""
+                sql_query = query["new_query"]
+
+        elif extension_type == "pruned":
+            if query_type == "original":
+                question = query["question"]
+                sql_query = query["SQL"]
+            elif query_type == "new":
+                question = generate_new_extended_question(
+                query["SQL"], query["new_query"], schema, query["question"]
+            )
             sql_query = query["new_query"]
-            # question = generate_dev_set_like_question(entry['main_query'])
+
         json_data.append(
             {
                 "question_id": idx,
                 "db_id": query["db_id"],
-                "question": question,  # Placeholder
-                "evidence": query["evidence"],  # Placeholder
+                "question": question,
+                "evidence": query.get("evidence", ""),
                 "SQL": sql_query,
-                "difficulty": query["difficulty"],  # Default difficulty
+                "difficulty": query.get("difficulty", "challenging"),
             }
         )
         sql_queries.append(f"{sql_query}\t{query['db_id']}")
 
-    # Write JSON output
-    with open(json_output_file, "w") as json_file:
-        json.dump(json_data, json_file, indent=4)
-
-    # Write SQL output
-    with open(sql_output_file, "w") as sql_file:
-        sql_file.write("\n".join(sql_queries))
+    write_outputs(json_output_file, sql_output_file, json_data, sql_queries)

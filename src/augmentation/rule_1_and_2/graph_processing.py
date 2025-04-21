@@ -1,4 +1,12 @@
 import networkx as nx
+from itertools import combinations, product
+from rule_1_and_2.query_generation import translate_graph_into_query, extend_old_query
+from rule_1_and_2.query_execution import (
+    execute_new_queries,
+    execute_extended_queries,
+    add_values_to_translated_queries,
+)
+from copy import deepcopy
 
 
 def find_candidate_table(schema, subgraph):
@@ -35,7 +43,6 @@ def is_pattern_in_old_list(pattern, pattern_list):
 
     for existing_pattern in pattern_list:
         if nx.is_isomorphic(pattern, existing_pattern["subgraph"]):
-            # if nx.is_isomorphic(pattern, existing_pattern):
             return True
     return False
 
@@ -46,7 +53,6 @@ def is_pattern_in_new_list(pattern, pattern_list):
     """
     for existing_pattern in pattern_list:
         if nx.is_isomorphic(pattern, existing_pattern["extended_subgraph"]):
-            # if nx.is_isomorphic(pattern, existing_pattern):
             return True
     return False
 
@@ -65,7 +71,7 @@ def graph_to_signature(graph):
     return nodes, edges, labels
 
 
-def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
+def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
     """
     Extend subgraphs based on rules and filter unique patterns.
 
@@ -74,164 +80,177 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, schema):
         schema (nx.Graph): The main schema graph.
 
     Returns:
-        tuple: (rule_1_patterns, rule_2_patterns, r1_before, r2_before, r1_after, r2_after)
+        tuple: (rule_1_excluded, rule_2_excluded, rule_1_pruned, rule_2_pruned)
     """
-    unique_patterns = []  # Store all unique patterns across iterations
-    unique_extended_graphs = []  # Keep track of extended graphs with no duplicates
-    unique_signatures = set()
+    pruned_extensions = []
+    excluded_extensions = []
+    max_nodes = max(
+        (len(sg["subgraph"].nodes()) for sg in pre_rule_subgraphs), default=0
+    )
 
-    # Include signatures of the initial subgraphs
-    # Step 1: Extend each subgraph and filter for unique patterns
     for subgraph in pre_rule_subgraphs:
         candidate_tables = find_candidate_table(schema, subgraph["subgraph"])
-        # candidate_tables = find_candidate_table(schema, subgraph)
 
         for candidate_table, connections in candidate_tables:
-            # Create the extended subgraph
-            extended_subgraph = subgraph["subgraph"].copy()
-            # extended_subgraph = subgraph.copy()
+            all_candidate_edges = [(candidate_table, conn) for conn in connections]
 
-            # Batch update all existing edges to blue
-            nx.set_edge_attributes(
-                extended_subgraph,
-                {edge: {"color": "blue"} for edge in extended_subgraph.edges()},
-            )
-            for conn in connections:
-                extended_subgraph.add_edge(candidate_table, conn, color="red")
-                extended_subgraph[candidate_table][conn]["label"] = (
-                    schema.get_edge_data(candidate_table, conn)["label"]
-                )
-
-                introduced_cycles = [
-                    cycle
-                    for cycle in nx.simple_cycles(extended_subgraph)
-                    if candidate_table in cycle
-                ]
-                is_redundant = False
-                for cycle in introduced_cycles:
-                    cycle_edges = [
-                        (cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)
-                    ] + [(cycle[-1], cycle[0])]
-                    if (candidate_table, conn) not in cycle_edges and (
-                        conn,
-                        candidate_table,
-                    ) not in cycle_edges:
-                        continue
-
-                    cycle_edge_labels = {
-                        edge: extended_subgraph.get_edge_data(*edge)["label"]
-                        for edge in cycle_edges
-                    }
-
-                    extra_edge = (
-                        (candidate_table, conn)
-                        if (candidate_table, conn) in cycle_edge_labels
-                        else (conn, candidate_table)
+            for size in range(len(all_candidate_edges), 0, -1):
+                for edge_combination in combinations(all_candidate_edges, size):
+                    temp_subgraph = subgraph["subgraph"].copy()
+                    nx.set_edge_attributes(
+                        temp_subgraph,
+                        {edge: {"color": "blue"} for edge in temp_subgraph.edges()},
                     )
-                    multiple_labels = cycle_edge_labels[extra_edge].split(";")
 
-                    for label in multiple_labels:
-                        cycle_edge_labels[extra_edge] = label.strip()
-                        join_keys = set()
-                        for (t1, t2), condition in cycle_edge_labels.items():
-                            if not ((t1, t2) == extra_edge):
-                                for cond in condition.split(";"):
-                                    left, right = cond.strip().split("=")
-                                    left, right = left.strip(), right.strip()
-                                    join_keys.add(left)
-                                    join_keys.add(right)
-                        extra_condition = cycle_edge_labels[extra_edge]
-                        left, right = extra_condition.split("=")
-                        left, right = left.strip(), right.strip()
-                        if left in join_keys or right in join_keys:
-                            is_redundant = True
+                    for src, dst in edge_combination:
+                        temp_subgraph.add_edge(src, dst, color="red")
+                        temp_subgraph[src][dst]["label"] = schema.get_edge_data(
+                            src, dst
+                        )["label"]
 
-                        if not is_redundant:
-                            extended_subgraph[candidate_table][conn]["label"] = label
+                    introduced_cycles = [
+                        cycle
+                        for cycle in nx.simple_cycles(temp_subgraph)
+                        if candidate_table in cycle
+                    ]
+                    is_redundant = False
+
+                    for cycle in introduced_cycles:
+                        cycle_edges = [
+                            (cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)
+                        ] + [(cycle[-1], cycle[0])]
+                        cycle_edge_labels = {
+                            edge: temp_subgraph.get_edge_data(*edge)["label"]
+                            for edge in cycle_edges
+                        }
+
+                        extra_edges_caused_cycle = [
+                            edge
+                            for edge in cycle_edges
+                            if edge in edge_combination
+                            or (edge[1], edge[0]) in edge_combination
+                        ]
+                        if not extra_edges_caused_cycle:
+                            continue
+
+                        all_label_list = [
+                            cycle_edge_labels.get(edge, "").split(";")
+                            for edge in extra_edges_caused_cycle
+                        ]
+                        label_combinations = list(product(*all_label_list))
+
+                        join_keys = {
+                            key.strip().lower()
+                            for (t1, t2), condition in cycle_edge_labels.items()
+                            for cond in condition.split(";")
+                            if (t1, t2) not in extra_edges_caused_cycle
+                            for key in cond.strip().split("=")
+                        }
+
+                        for label_set in label_combinations:
+                            for i, label in enumerate(label_set):
+                                edge = extra_edges_caused_cycle[i]
+                                left, right = map(str.strip, label.split("="))
+
+                                if i != len(label_set) - 1:
+                                    join_keys.update([left.lower(), right.lower()])
+                                    temp_subgraph[edge[0]][edge[1]]["label"] = (
+                                        label.strip()
+                                    )
+
+                                elif (
+                                    left.lower() in join_keys
+                                    and right.lower() in join_keys
+                                ):
+                                    is_redundant = True
+
+                                else:
+                                    temp_subgraph[edge[0]][edge[1]]["label"] = (
+                                        label.strip()
+                                    )
+                                    is_redundant = False
+
+                            if not is_redundant:
+                                break
+
+                        if is_redundant:
                             break
 
-                    if is_redundant:
+                    if not is_redundant:
+                        extended_subgraph = temp_subgraph
                         break
 
-                if is_redundant:
-                    extended_subgraph.remove_edge(candidate_table, conn)
+                if not is_redundant:
+                    break
 
-            extended_signature = graph_to_signature(extended_subgraph)
-            if extended_signature not in unique_signatures:
-                unique_extended_graphs.append(extended_subgraph)
-                unique_signatures.add(extended_signature)
+            new_subgraph = subgraph.copy()
+            new_subgraph["extended_subgraph"] = extended_subgraph
+            new_subgraph["db_id"] = db_id
 
-            if not is_pattern_in_old_list(extended_subgraph, pre_rule_subgraphs):
-                if not is_pattern_in_new_list(extended_subgraph, unique_patterns):
-                    new_subgraph = subgraph.copy()
-                    new_subgraph["extended_subgraph"] = extended_subgraph
-                    unique_patterns.append(new_subgraph)
+            new_queries = translate_graph_into_query(
+                pattern=new_subgraph["extended_subgraph"],
+                db_id=db_id,
+                df=df,
+                schema=schema,
+            )
+            add_values_to_translated_queries(new_queries, db_id, adapter)
 
-    max_nodes = (
-        max(len(sg["subgraph"].nodes()) for sg in pre_rule_subgraphs)
-        if pre_rule_subgraphs
-        else 0
-    )
-    # max_nodes = (
-    #     max(len(sg.nodes()) for sg in pre_rule_subgraphs) if pre_rule_subgraphs else 0
-    # )
-    r1_before = 0
-    r2_before = 0
-    for subgraph in unique_extended_graphs:
-        if len(subgraph.nodes()) == max_nodes + 1:
-            r1_before += 1
-        elif 2 <= len(subgraph.nodes()) <= max_nodes:
-            r2_before += 1
+            extended_old_queries = deepcopy(extend_old_query(new_subgraph))
+            new_queries, new_queries_validity = execute_new_queries(
+                new_queries, adapter
+            )
+            extended_old_queries, extended_queries_validity = execute_extended_queries(
+                extended_old_queries, adapter
+            )
 
-    r1_dev_before = 0
-    r2_dev_before = 0
-    for subgraph in pre_rule_subgraphs:
-        r1_dev_before += len(subgraph["equivalent_queries"])
-        r2_dev_before += len(subgraph["equivalent_queries"])
+            if new_queries_validity and extended_queries_validity:
+                new_subgraph["graph_first"] = new_queries
+                new_subgraph["query_first"] = extended_old_queries
 
-    # Step 2: Divide the unique patterns into Rule 1 and Rule 2
-    rule_1_patterns = []
-    rule_2_patterns = []
+            else:
+                continue
 
-    for pattern in unique_patterns:
-        if len(pattern["extended_subgraph"].nodes()) == max_nodes + 1:
-            # if len(pattern.nodes()) == max_nodes + 1:
-            rule_1_patterns.append(pattern)
-        elif 2 <= len(pattern["extended_subgraph"].nodes()) <= max_nodes:
-            # elif 2 <= len(pattern.nodes()) <= max_nodes:
-            rule_2_patterns.append(pattern)
+            if not is_pattern_in_old_list(
+                new_subgraph["extended_subgraph"], pre_rule_subgraphs
+            ):
+                if not is_pattern_in_new_list(
+                    new_subgraph["extended_subgraph"], pruned_extensions
+                ):
+                    pruned_extensions.append(new_subgraph)
+            else:
+                excluded_extensions.append(new_subgraph)
 
-    # Step 3: Sort both lists by number of nodes
-    rule_1_patterns.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
-    rule_2_patterns.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
-    # rule_1_patterns.sort(key=lambda p: len(p.nodes()))
-    # rule_2_patterns.sort(key=lambda p: len(p.nodes()))
-    # for pattern in rule_2_patterns:
-    #     if set(pattern.nodes()) == {"badges", "users", "posts", "votes"}:
-    #         print("Pattern: ", pattern.edges(data=True))
-    #         print()
+    rule_1_pruned_extensions = [
+        extension
+        for extension in pruned_extensions
+        if len(extension["extended_subgraph"].nodes()) == max_nodes + 1
+    ]
+    rule_2_pruned_extensions = [
+        extension
+        for extension in pruned_extensions
+        if 2 <= len(extension["extended_subgraph"].nodes()) <= max_nodes
+    ]
+    rule_1_excluded_extensions = [
+        extension
+        for extension in excluded_extensions
+        if len(extension["extended_subgraph"].nodes()) == max_nodes + 1
+    ]
+    rule_2_excluded_extensions = [
+        extension
+        for extension in excluded_extensions
+        if 2 <= len(extension["extended_subgraph"].nodes()) <= max_nodes
+    ]
 
-    r1_after = len(rule_1_patterns)
-    r2_after = len(rule_2_patterns)
-
-    r1_dev_after = 0
-    r2_dev_after = 0
-    for pattern in rule_1_patterns:
-        r1_dev_after += len(pattern["equivalent_queries"])
-    for pattern in rule_2_patterns:
-        r2_dev_after += len(pattern["equivalent_queries"])
+    rule_1_pruned_extensions.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
+    rule_1_excluded_extensions.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
+    rule_2_pruned_extensions.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
+    rule_2_excluded_extensions.sort(key=lambda p: len(p["extended_subgraph"].nodes()))
 
     return (
-        rule_1_patterns,
-        rule_2_patterns,
-        r1_before,
-        r2_before,
-        r1_after,
-        r2_after,
-        r1_dev_before,
-        r2_dev_before,
-        r1_dev_after,
-        r2_dev_after,
+        rule_1_pruned_extensions,
+        rule_2_pruned_extensions,
+        rule_1_excluded_extensions,
+        rule_2_excluded_extensions,
     )
 
 
