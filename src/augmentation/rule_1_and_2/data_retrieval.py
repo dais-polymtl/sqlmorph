@@ -2,7 +2,7 @@ import pickle
 from pathlib import Path
 
 
-def retrieve_all_dev_patterns(folder_path):
+def retrieve_all_dev_subgraphs(folder_path, logger):
     """
     Retrieve all subgraphs from the pickle files in the folder.
 
@@ -18,11 +18,9 @@ def retrieve_all_dev_patterns(folder_path):
         try:
             with file_name.open("rb") as f:
                 join_patterns = pickle.load(f)
-                # subgraphs = [join_pattern['subgraph'] for join_pattern in join_patterns]
-                # all_subgraphs.extend(subgraphs)
                 all_subgraphs.extend(join_patterns)
         except (ValueError, KeyError, pickle.UnpicklingError) as e:
-            print(f"Skipping file {file_name.name}: {e}")
+            logger.log(level="warning", action="file_skipped", details={"file_name": file_name.name, "error": str(e)})
 
     return all_subgraphs
 

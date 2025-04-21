@@ -1,7 +1,7 @@
 import json
-from column import Column
-from table import Table
-from functional_dependencies import ForeignKey
+from .column import Column
+from .table import Table
+from .functional_dependencies import ForeignKey
 from collections import defaultdict
 import os
 import networkx as nx
@@ -216,18 +216,21 @@ def main():
 
         for db_info in data:
             database_name = db_info.get("db_id", "")
+            
             schema = BIRD_Schema(database_name, "dev_tables.json")
-            schema.save_graph_and_image("bird_graphs")
+            if database_name == "toxicology":
+                print(schema)
+    #         schema.save_graph_and_image("bird_graphs")
 
-    with open("train_tables.json", "r") as file:
-        data = json.load(file)
+    # with open("train_tables.json", "r") as file:
+    #     data = json.load(file)
 
-        for db_info in data:
-            database_name = db_info.get("db_id", "")
-            schema = BIRD_Schema(database_name, "train_tables.json")
-            print(schema)
+    #     for db_info in data:
+    #         database_name = db_info.get("db_id", "")
+    #         schema = BIRD_Schema(database_name, "train_tables.json")
+    #         print(schema)
 
-            schema.save_graph_and_image("bird_graphs")
+    #         schema.save_graph_and_image("bird_graphs")
 
 
 if __name__ == "__main__":
