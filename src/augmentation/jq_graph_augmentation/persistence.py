@@ -10,7 +10,7 @@ from .llm_inference import (
     generate_evidence,
     generate_new_extended_question,
 )
-from .graph_processing import calculate_subgraph_centrality, is_cyclic
+from .jq_graph_extension import calculate_subgraph_centrality, is_cyclic
 from .data_retrieval import load_schema
 from src.data_prep.database_schemas.bird_schema import BIRD_Schema
 
@@ -51,7 +51,9 @@ def save_new_queries(
     json_output_file,
     sql_output_file,
     question_type,
-    extension_type
+    extension_type,
+    prompt_renderer,
+    model,
 ):
     global_rule_data = []
 
@@ -91,11 +93,30 @@ def save_new_queries(
 
         elif extension_type == "pruned":
             if question_type == "explicit":
-                question = generate_explicit_question(entry["main_query"], schema=schema)
+                question = generate_explicit_question(
+                    entry["main_query"],
+                    schema=schema,
+                    prompt_renderer=prompt_renderer,
+                    model=model,
+                )
+                # question = ""
                 evidence = ""
             elif question_type == "dev_set_like":
-                question = generate_dev_set_like_question(entry["main_query"], schema=schema)
-                evidence = generate_evidence(entry["main_query"], schema=schema, question=question)
+                # question = ""
+                # evidence = ""
+                question = generate_dev_set_like_question(
+                    entry["main_query"],
+                    schema=schema,
+                    prompt_renderer=prompt_renderer,
+                    model=model,
+                )
+                evidence = generate_evidence(
+                    entry["main_query"],
+                    schema=schema,
+                    question=question,
+                    prompt_renderer=prompt_renderer,
+                    model=model,
+                )
 
         json_data.append(
             {
@@ -118,10 +139,11 @@ def save_old_extended_queries(
     json_output_file,
     sql_output_file,
     query_type,
-    extension_type
+    extension_type,
+    prompt_renderer,
+    model,
 ):
     global_rule_data = []
-
     for rule_data in rule_list:
         db_id = rule_data["db_id"]
         schema_graph = load_schema(
@@ -146,7 +168,6 @@ def save_old_extended_queries(
     )
 
     json_data, sql_queries = [], []
-
     for idx, entry in enumerate(global_rule_data_sorted):
         query = entry["equivalent_query"]
         schema = get_schema_object(query["db_id"])
@@ -165,9 +186,15 @@ def save_old_extended_queries(
                 sql_query = query["SQL"]
             elif query_type == "new":
                 question = generate_new_extended_question(
-                query["SQL"], query["new_query"], schema, query["question"]
-            )
-            sql_query = query["new_query"]
+                    query["SQL"],
+                    query["new_query"],
+                    schema,
+                    query["question"],
+                    prompt_renderer,
+                    model,
+                )
+                # question = ""
+                sql_query = query["new_query"]
 
         json_data.append(
             {

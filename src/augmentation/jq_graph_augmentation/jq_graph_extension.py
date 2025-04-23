@@ -1,7 +1,11 @@
 import networkx as nx
+import sys
 from itertools import combinations, product
-from rule_1_and_2.query_generation import translate_graph_into_query, extend_old_query
-from rule_1_and_2.query_execution import (
+from jq_graph_augmentation.query_generation import (
+    translate_graph_into_query,
+    extend_old_query,
+)
+from jq_graph_augmentation.query_execution import (
     execute_new_queries,
     execute_extended_queries,
     add_values_to_translated_queries,
@@ -71,7 +75,18 @@ def graph_to_signature(graph):
     return nodes, edges, labels
 
 
-def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
+def extend_and_filter_subgraphs(
+    pre_rule_subgraphs,
+    db_id,
+    df,
+    schema,
+    adapter,
+    logger,
+    query_first,
+    graph_first,
+    n_tables,
+    mode,
+):
     """
     Extend subgraphs based on rules and filter unique patterns.
 
@@ -87,6 +102,29 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
     max_nodes = max(
         (len(sg["subgraph"].nodes()) for sg in pre_rule_subgraphs), default=0
     )
+    if max_nodes + 1 != n_tables:
+        logger.log(
+            "error",
+            "Mismatch in table count. Aborting.",
+            {
+                "db_id": db_id,
+                "expected_tables": n_tables,
+                "actual_tables (+1)": max_nodes + 1,
+            },
+        )
+        sys.exit(1)
+    if mode == "n":
+        # only keep subgraphs with max_tables
+        pre_rule_subgraphs = [
+            sg for sg in pre_rule_subgraphs if len(sg["subgraph"].nodes()) == max_nodes
+        ]
+    elif mode == "lt_n":
+        # only keep subgraphs with max_tables - 1
+        pre_rule_subgraphs = [
+            sg
+            for sg in pre_rule_subgraphs
+            if len(sg["subgraph"].nodes()) == max_nodes - 1
+        ]
 
     for subgraph in pre_rule_subgraphs:
         candidate_tables = find_candidate_table(schema, subgraph["subgraph"])
@@ -154,9 +192,9 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
 
                                 if i != len(label_set) - 1:
                                     join_keys.update([left.lower(), right.lower()])
-                                    temp_subgraph[edge[0]][edge[1]]["label"] = (
-                                        label.strip()
-                                    )
+                                    temp_subgraph[edge[0]][edge[1]][
+                                        "label"
+                                    ] = label.strip()
 
                                 elif (
                                     left.lower() in join_keys
@@ -165,9 +203,9 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
                                     is_redundant = True
 
                                 else:
-                                    temp_subgraph[edge[0]][edge[1]]["label"] = (
-                                        label.strip()
-                                    )
+                                    temp_subgraph[edge[0]][edge[1]][
+                                        "label"
+                                    ] = label.strip()
                                     is_redundant = False
 
                             if not is_redundant:
@@ -193,7 +231,7 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
                 df=df,
                 schema=schema,
             )
-            add_values_to_translated_queries(new_queries, db_id, adapter)
+            add_values_to_translated_queries(new_queries, adapter)
 
             extended_old_queries = deepcopy(extend_old_query(new_subgraph))
             new_queries, new_queries_validity = execute_new_queries(
@@ -204,8 +242,10 @@ def extend_and_filter_subgraphs(pre_rule_subgraphs, db_id, df, schema, adapter):
             )
 
             if new_queries_validity and extended_queries_validity:
-                new_subgraph["graph_first"] = new_queries
-                new_subgraph["query_first"] = extended_old_queries
+                if graph_first:
+                    new_subgraph["graph_first"] = new_queries
+                if query_first:
+                    new_subgraph["query_first"] = extended_old_queries
 
             else:
                 continue

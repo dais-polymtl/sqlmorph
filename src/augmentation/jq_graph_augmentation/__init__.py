@@ -1,5 +1,5 @@
 from .data_retrieval import retrieve_all_dev_subgraphs, load_schema
-from .graph_processing import extend_and_filter_subgraphs
+from .jq_graph_extension import extend_and_filter_subgraphs
 from .query_generation import translate_graph_into_query, extend_old_query 
 from .query_execution import add_values_to_translated_queries, execute_new_queries, execute_extended_queries
 from .persistence import save_new_queries, save_old_extended_queries

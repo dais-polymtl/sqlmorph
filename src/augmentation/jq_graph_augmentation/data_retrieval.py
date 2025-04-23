@@ -20,7 +20,11 @@ def retrieve_all_dev_subgraphs(folder_path, logger):
                 join_patterns = pickle.load(f)
                 all_subgraphs.extend(join_patterns)
         except (ValueError, KeyError, pickle.UnpicklingError) as e:
-            logger.log(level="warning", action="file_skipped", details={"file_name": file_name.name, "error": str(e)})
+            logger.log(
+                level="warning",
+                action="file_skipped",
+                details={"file_name": file_name.name, "error": str(e)},
+            )
 
     return all_subgraphs
 
