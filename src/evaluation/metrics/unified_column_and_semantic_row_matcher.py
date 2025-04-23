@@ -1,12 +1,9 @@
-import json
 import os
 import time
-from datetime import datetime
-from typing import Dict
+from typing import Any
 
 import numpy as np
-import pandas as pd
-from scipy.optimize import linear_sum_assignment
+import scipy
 
 from src.core.database import DatabaseHandler, DBMS
 from src.core.logger import Logger
@@ -23,22 +20,13 @@ logger = Logger(__name__)
 
 
 def execute_query(context):
-    """
-    Execute SQL queries and handle errors. Runs both predicted and ground truth queries,
-    calculates binary execution accuracy, and updates the context with the results.
-    """
-    db_handler = DatabaseHandler(
-        dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
-    )
-
-    # TODO: Fix raising error in the database handler
     try:
-        # Execute both SQL queries
+        db_handler = DatabaseHandler(
+            dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
+        )
+
         pred_cols, pred_rows = db_handler.run_query(context["predicted_sql"])
         gt_cols, gt_rows = db_handler.run_query(context["ground_truth_sql"])
-
-        # Binary execution accuracy
-        ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
         context.update(
             {
@@ -46,33 +34,24 @@ def execute_query(context):
                 "pred_rows": pred_rows,
                 "gt_cols": gt_cols,
                 "gt_rows": gt_rows,
-                "ex": ex,
                 "has_error": False,
             }
         )
 
     except Exception as e:
-        error_message = f"SQL execution failed: {str(e)}"
         logger.log("error", "QUERY_EXECUTION_FAILED", {"error": str(e)})
-
         context.update(
             {
                 "has_error": True,
-                "error_message": error_message,
+                "error_message": str(e),
                 "metrics": {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": 0},
-                "time_taken": float(time.time() - context["start_time"]),
-                "error": error_message,
             }
         )
 
 
 def match_columns(context):
-    """
-    Match columns and build row representations. Creates unified column sets,
-    builds string representations for rows, and calculates column coverage penalty.
-    """
-    if context.get("has_error", False):
-        return
+    if context["has_error"]:
+        return context
 
     pred_cols = context["pred_cols"]
     gt_cols = context["gt_cols"]
@@ -133,12 +112,8 @@ def match_columns(context):
 
 
 def match_rows(context):
-    """
-    Match rows using embeddings and bipartite matching. Embeds row strings,
-    computes similarity matrix, and performs optimal matching using the Hungarian algorithm.
-    """
-    if context.get("has_error", False):
-        return
+    if context["has_error"]:
+        return context
 
     pred_row_strings = context["pred_row_strings"]
     gt_row_strings = context["gt_row_strings"]
@@ -193,7 +168,7 @@ def match_rows(context):
     matched_pairs, unmatched_pred, unmatched_gt = [], set(), set()
     if similarity_matrix.size > 0:
         cost_matrix = -similarity_matrix
-        pred_indices, gt_indices = linear_sum_assignment(cost_matrix)
+        pred_indices, gt_indices = scipy.optimize.linear_sum_assignment(cost_matrix)
         matched_pairs = list(zip(pred_indices, gt_indices))
 
         # Identify unmatched rows
@@ -262,124 +237,66 @@ def match_rows(context):
 
 
 def assign_metrics(context):
-    """
-    Calculate final metrics based on matching results.
-    Computes precision, recall, F1 score and handles edge cases for empty result sets.
-    """
-    if context.get("has_error", False):
-        return
+    if context["has_error"]:
+        return context
 
     sum_matched_sim = context["sum_matched_sim"]
     P = context["P"]
     G = context["G"]
-    ex = context["ex"]
-    start_time = context["start_time"]
-
-    # Calculate time taken
-    context["time_taken"] = float(time.time() - start_time)
 
     # Handle edge cases
     if P == 0 and G == 0:
         # Both result sets empty
-        metrics = {"EXP": 1.0, "EXR": 1.0, "F1": 1.0, "EX": ex}
+        metrics = {"EX": 1, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
     elif P == 0:
         # No predicted rows but ground truth has rows
-        metrics = {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": ex}
+        metrics = {"EX": 0, "EXP": 0.0, "EXR": 0.0, "F1": 0.0}
     elif G == 0:
         # Has predicted rows but no ground truth
-        metrics = {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": ex}
+        metrics = {"EX": 0, "EXP": 0.0, "EXR": 0.0, "F1": 0.0}
     else:
-        # Calculate metrics
+        EX = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
         EXP = float(sum_matched_sim / P) if P > 0 else 0.0
         EXR = float(sum_matched_sim / G) if G > 0 else 0.0
         F1 = float(2 * (EXP * EXR) / (EXP + EXR)) if (EXP + EXR) > 0 else 0.0
-
-        metrics = {"EXP": EXP, "EXR": EXR, "F1": F1, "EX": ex}
-
-    logger.log(
-        "INFO",
-        "EVALUATION_COMPLETE",
-        {
-            "EXP": metrics.get("EXP", 0.0),
-            "EXR": metrics.get("EXR", 0.0),
-            "F1": metrics.get("F1", 0.0),
-            "EX": metrics.get("EX", 0),
-            "time_taken": context["time_taken"],
-        },
-    )
+        metrics = {"EX": EX, "EXP": EXP, "EXR": EXR, "F1": F1}
 
     context["metrics"] = metrics
 
-
-def dump_logs(context, log_files_dir=None):
-    """
-    Report evaluation results and optionally save to file.
-    """
-    metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
-    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
-    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
-    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
-    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
-    print(f"Time taken: {context.get('time_taken', 0.0):.2f} seconds")
-    print("==========================================================")
-
-    def json_serializer(obj):
-        """Convert non-serializable objects to strings or other JSON-serializable types."""
-        if isinstance(obj, (np.integer, np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.floating, np.float64, np.float32)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, pd.DataFrame):
-            return obj.to_dict(orient="records")
-        elif isinstance(obj, pd.Series):
-            return obj.to_dict()
-        return str(obj)  # For any other type, just convert to string
-
-    if log_files_dir:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        os.makedirs(log_files_dir, exist_ok=True)
-        log_filename = os.path.join(
-            log_files_dir, f"evaluation_results_{timestamp}.json"
-        )
-
-        with open(log_filename, "w") as f:
-            json.dump(context, f, indent=2, default=json_serializer)
-
-        logger.log("info", "EVALUATION_LOGS_SAVED", {"log_file": log_filename})
+    logger.log("INFO", "EVALUATION_COMPLETE", {"METRICS": metrics})
 
 
 def run_eval_pipeline(
     predicted_sql: str,
     ground_truth_sql: str,
-    db_params: Dict,
+    db_params: dict[str, Any],
     embedding_model: OpenAIModel | OllamaModel | HuggingFaceModel,
-    log_file_dir: str,
 ):
-    """
-    Run the complete SQL evaluation pipeline. Coordinates the four stages of evaluation and returns the context with all results.
-    """
     context = {
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
         "db_params": db_params,
         "embedding_model": embedding_model,
-        "start_time": time.time(),
+        "metrics": {},
         "has_error": False,
     }
+
+    start_time = time.time()
 
     execute_query(context)
     match_columns(context)
     match_rows(context)
     assign_metrics(context)
 
-    dump_logs(context, log_file_dir)
+    context["latency"] = time.time() - start_time
+
+    return context
 
 
 if __name__ == "__main__":
-    # Example usage
+    # ad-hoc example to test the evaluation technique! check out evaluation_metrics.py for the main entry point
+
+    # input data
     predicted_sql = """
     SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
     FROM satscores T1 
@@ -397,17 +314,27 @@ if __name__ == "__main__":
     LIMIT 10;
     """
 
+    # config
     db_params = {
         "dbms": DBMS.SQLITE,
         "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
     }
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
-    log_file_dir = ".data/evaluation_metrics_logs/_1_row_semantic_matcher/"
 
-    run_eval_pipeline(
+    # run evaluation pipeline
+    context = run_eval_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
         db_params=db_params,
         embedding_model=embedding_model,
-        log_file_dir=log_file_dir,
     )
+
+    # print evaluation results
+    metrics = context.get("metrics", {})
+    print("=================== Evaluation Results ===================")
+    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
+    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
+    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
+    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
+    print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
+    print("==========================================================")

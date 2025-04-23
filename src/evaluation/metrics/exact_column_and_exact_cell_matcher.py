@@ -1,11 +1,5 @@
-import json
-import os
 import time
 from collections import Counter
-from datetime import datetime
-
-import numpy as np
-import pandas as pd
 
 from src.core.database.database_handler import DatabaseHandler, DBMS
 from src.core.logger import Logger
@@ -13,54 +7,49 @@ from src.core.logger import Logger
 logger = Logger(__name__)
 
 
-def execute_query(context):
-    """Execute both SQL queries and store results in context."""
-    db_handler = DatabaseHandler(
-        dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
-    )
-
-    # TODO: Fix raising error in the database handler
+def execute_query(context: dict):
     try:
-        # Execute the SQL queries
-        gt_columns, gt_rows = db_handler.run_query(context["ground_truth_sql"])
-        pred_columns, pred_rows = db_handler.run_query(context["predicted_sql"])
+        db_handler = DatabaseHandler(
+            dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
+        )
+
+        pred_cols, pred_rows = db_handler.run_query(context["predicted_sql"])
+        gt_cols, gt_rows = db_handler.run_query(context["ground_truth_sql"])
+
         context.update(
             {
-                "gt_columns": gt_columns,
-                "gt_rows": gt_rows,
-                "pred_columns": pred_columns,
+                "has_error": False,
+                "pred_cols": pred_cols,
                 "pred_rows": pred_rows,
+                "gt_cols": gt_cols,
+                "gt_rows": gt_rows,
+                "ground_truth_cells": len(gt_rows) * len(gt_cols),
+                "predicted_cells": len(pred_rows) * len(pred_cols),
+            }
+        )
+    except Exception as e:
+        logger.log("error", "QUERY_EXECUTION_FAILED", {"error": str(e)})
+        context.update(
+            {
+                "has_error": True,
+                "error_message": str(e),
+                "matched_cells": 0,
+                "ground_truth_cells": 0,
+                "predicted_cells": 0,
+                "metrics": {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": 0},
             }
         )
 
-        context["ground_truth_cells"] = len(gt_rows) * len(gt_columns)
-        context["predicted_cells"] = len(pred_rows) * len(pred_columns)
 
-    except Exception as e:
-        logger.log("error", "QUERY_EXECUTION_FAILED", {"error": str(e)})
-        context["has_error"] = True
-        context["metrics"] = {
-            "EX": 0,
-            "EXP": 0.0,
-            "EXR": 0.0,
-            "F1": 0.0,
-        }
-        context["ground_truth_cells"] = 0
-        context["predicted_cells"] = 0
-
-    context["matched_cells"] = 0
-
-
-def match_columns(context):
-    """Find column intersections and prepare indices for row matching."""
+def match_columns(context: dict):
     if context["has_error"]:
         return
 
-    gt_columns = context["gt_columns"]
-    pred_columns = context["pred_columns"]
+    gt_cols = context["gt_cols"]
+    pred_cols = context["pred_cols"]
 
     # Find intersection of columns
-    common_cols = set(gt_columns) & set(pred_columns)
+    common_cols = set(gt_cols) & set(pred_cols)
 
     # Check if there are no common columns
     if len(common_cols) == 0:
@@ -72,13 +61,13 @@ def match_columns(context):
             "F1": 0.0,
         }
         context["matched_cells"] = 0
-        context["ground_truth_cells"] = len(context["gt_rows"]) * len(gt_columns)
-        context["predicted_cells"] = len(context["pred_rows"]) * len(pred_columns)
+        context["ground_truth_cells"] = len(context["gt_rows"]) * len(gt_cols)
+        context["predicted_cells"] = len(context["pred_rows"]) * len(pred_cols)
         return
 
     # Create index mappings for common columns
-    gt_col_to_idx = {col: idx for idx, col in enumerate(gt_columns)}
-    pred_col_to_idx = {col: idx for idx, col in enumerate(pred_columns)}
+    gt_col_to_idx = {col: idx for idx, col in enumerate(gt_cols)}
+    pred_col_to_idx = {col: idx for idx, col in enumerate(pred_cols)}
 
     gt_common_indices = [
         gt_col_to_idx[col] for col in common_cols if col in gt_col_to_idx
@@ -100,8 +89,7 @@ def match_columns(context):
     )
 
 
-def match_rows(context):
-    """Project rows to common columns and compute match statistics."""
+def match_rows(context: dict):
     if context["has_error"]:
         return
 
@@ -110,7 +98,7 @@ def match_rows(context):
     gt_common_indices = context["gt_common_indices"]
     pred_common_indices = context["pred_common_indices"]
     common_cols = context["common_cols"]
-    gt_columns = context["gt_columns"]
+    gt_cols = context["gt_cols"]
 
     # Project rows to only include common columns
     gt_projected_rows = [
@@ -123,7 +111,7 @@ def match_rows(context):
     # Calculate total cells and rows
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
-    g_cells = g_rows * len(gt_columns)
+    g_cells = g_rows * len(gt_cols)
     p_cells = p_rows * len(common_cols)
 
     # Count frequencies of projected rows
@@ -149,11 +137,8 @@ def match_rows(context):
     )
 
 
-def assign_metrics(context):
-    """Calculate evaluation metrics based on match statistics."""
+def assign_metrics(context: dict):
     if context["has_error"]:
-        # Add time taken separately from metrics
-        context["time_taken"] = time.time() - context["start_time"]
         return
 
     # Extract values from context
@@ -161,9 +146,6 @@ def assign_metrics(context):
     g_cells = context["ground_truth_cells"]
     p_cells = context["predicted_cells"]
     ex = context["EX"]
-
-    # Calculate time taken
-    context["time_taken"] = time.time() - context["start_time"]
 
     # Handle empty result cases
     if g_cells == 0 and p_cells == 0:
@@ -196,67 +178,35 @@ def assign_metrics(context):
     )
 
 
-def dump_logs(context, log_files_dir=None):
-    """
-    Report evaluation results and optionally save to file.
-    """
-    metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
-    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
-    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
-    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
-    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
-    print(f"Time taken: {context.get('time_taken', 0.0):.2f} seconds")
-    print("==========================================================")
-
-    def json_serializer(obj):
-        """Convert non-serializable objects to strings or other JSON-serializable types."""
-        if isinstance(obj, (np.integer, np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.floating, np.float64, np.float32)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, pd.DataFrame):
-            return obj.to_dict(orient="records")
-        elif isinstance(obj, pd.Series):
-            return obj.to_dict()
-        return str(obj)  # For any other type, just convert to string
-
-    if log_files_dir:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        os.makedirs(log_files_dir, exist_ok=True)
-        log_filename = os.path.join(
-            log_files_dir, f"evaluation_results_{timestamp}.json"
-        )
-
-        with open(log_filename, "w") as f:
-            json.dump(context, f, indent=2, default=json_serializer)
-
-        logger.log("info", "EVALUATION_LOGS_SAVED", {"log_file": log_filename})
-
-
 def run_evaluation_pipeline(
-    db_params, predicted_sql, ground_truth_sql, log_files_dir=None
+    predicted_sql: str,
+    ground_truth_sql: str,
+    db_params: dict,
 ):
-    """Orchestrate the complete SQL evaluation pipeline."""
     context = {
         "db_params": db_params,
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
-        "start_time": time.time(),
+        "metrics": {},
         "has_error": False,
     }
+
+    start_time = time.time()
 
     execute_query(context)
     match_columns(context)
     match_rows(context)
     assign_metrics(context)
 
-    dump_logs(context, log_files_dir)
+    context["latency"] = time.time() - start_time
+
+    return context
 
 
 if __name__ == "__main__":
+    # ad-hoc example to test the evaluation technique! check out evaluation_metrics.py for the main entry point
+
+    # input
     predicted_sql = """
     SELECT T3.Phone
     FROM satscores T1 
@@ -270,18 +220,27 @@ if __name__ == "__main__":
     FROM schools AS T1 
     INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
     ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 10;
+    LIMIT 20;
     """
 
+    # config
     db_params = {
         "dbms": DBMS.SQLITE,
         "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
     }
-    log_file_dir = ".data/evaluation_metrics_logs/_1_row_semantic_matcher/"
 
-    run_evaluation_pipeline(
-        db_params=db_params,
+    context = run_evaluation_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
-        log_files_dir=log_file_dir,
+        db_params=db_params,
     )
+
+    # print evaluation results
+    metrics = context.get("metrics", {})
+    print("=================== Evaluation Results ===================")
+    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
+    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
+    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
+    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
+    print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
+    print("==========================================================")
