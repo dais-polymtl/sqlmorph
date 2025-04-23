@@ -233,7 +233,6 @@ def translate_graph_into_query(schema, pattern, db_id, df):
                 f"{left_table}.{left_col} = {right_table}.{right_col}"
             )
 
-      
     # Construct the test query
     test_query = f"""
     SELECT {", ".join(test_select_columns)}, COUNT(*) AS combination_count
@@ -250,28 +249,33 @@ def translate_graph_into_query(schema, pattern, db_id, df):
         "filtering_columns": filtering_columns_with_tables,
     }
 
+
 def extend_old_query(pattern):
-    extended_subgraph = pattern['extended_subgraph']
-    equivalent_queries = pattern['equivalent_queries']
-    old_subgraph = pattern['subgraph']
+    extended_subgraph = pattern["extended_subgraph"]
+    equivalent_queries = pattern["equivalent_queries"]
+    old_subgraph = pattern["subgraph"]
     added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
     added_alias = "extra_table"
-    
+
     added_joins = []
     for edge in extended_subgraph.edges(data=True):
-        if edge[2]['color'] == 'red':
-            edge_label = edge[2]['label'].split(";")[0]
+        if edge[2]["color"] == "red":
+            edge_label = edge[2]["label"].split(";")[0]
             added_joins.append(edge_label)
-
 
     extended_old_queries = []
     for query in equivalent_queries:
-        old_flattened_query = query['flattened_query']
-        old_sql = query['SQL']
+        old_flattened_query = query["flattened_query"]
+        old_sql = query["SQL"]
         old_flattened_query = old_flattened_query.replace("DATETIME()", '"DATETIME()"')
         old_sql = old_sql.replace("DATETIME()", '"DATETIME()"')
-        old_query = old_flattened_query if sqlglot.parse_one(old_sql, dialect="mysql").find(Subquery) is not None and old_flattened_query != "" else old_sql
-        
+        old_query = (
+            old_flattened_query
+            if sqlglot.parse_one(old_sql, dialect="mysql").find(Subquery) is not None
+            and old_flattened_query != ""
+            else old_sql
+        )
+
         # Step 1: Track all tables and their aliases
         old_query_tables = {}
         for table in sqlglot.parse_one(old_query, dialect="mysql").find_all(exp.Table):
@@ -281,14 +285,12 @@ def extend_old_query(pattern):
                 old_query_tables[table_name] = []
             old_query_tables[table_name].append(table_alias)
 
-        
         # Step 3: Parse and modify the old query
         parsed_old_query = sqlglot.parse_one(old_query, dialect="mysql")
         if isinstance(parsed_old_query, exp.Select):
             if "joins" not in parsed_old_query.args:
                 parsed_old_query.args["joins"] = []
-            
-            
+
             # alias_counter = 1  # Counter for dynamically generating aliases for the new table
             join_conditions = []
             for join in added_joins:
@@ -300,27 +302,34 @@ def extend_old_query(pattern):
                     old_table, old_column, added_col = left_table, left_col, right_col
                 else:
                     old_table, old_column, added_col = right_table, right_col, left_col
-                
-                old_table_alias = old_query_tables.get(old_table.lower(), [old_table])[0]
-                join_conditions.append(exp.column(added_col, table=added_alias).eq(exp.column(old_column, table=old_table_alias)))                
 
-                
+                old_table_alias = old_query_tables.get(old_table.lower(), [old_table])[
+                    0
+                ]
+                join_conditions.append(
+                    exp.column(added_col, table=added_alias).eq(
+                        exp.column(old_column, table=old_table_alias)
+                    )
+                )
+
             if join_conditions:
                 join_expr = exp.Join(
                     this=exp.Table(
                         this=exp.Identifier(this=added_table, quoted=False),
-                        alias=exp.TableAlias(this=exp.Identifier(this=added_alias, quoted=False))
+                        alias=exp.TableAlias(
+                            this=exp.Identifier(this=added_alias, quoted=False)
+                        ),
                     ),
                     on=exp.and_(*join_conditions),
-                    kind="INNER"
+                    kind="INNER",
                 )
                 parsed_old_query.args["joins"].append(join_expr)
 
         # Step 4: Convert back to SQL
         new_query = parsed_old_query.sql()
-        if 'order' in new_query:
-            new_query = new_query.replace('order', "'order'")
-        query['new_query'] = new_query
+        if "order" in new_query:
+            new_query = new_query.replace("order", "'order'")
+        query["new_query"] = new_query
         extended_old_queries.append(query)
 
     return extended_old_queries

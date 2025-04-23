@@ -1,0 +1,44 @@
+Your task is to generate a natural language question from the given SQL query, following the format of a dev set question in a Text-to-SQL benchmark as the examples below. Use the schema provided below to better understand the relationships in the database. Work through the reasoning behind the question to ensure it aligns with the structure of the SQL query, and use the examples provided to guide your understanding of the question format.
+
+### Chain of Thought (CoT):
+1. **Understand the SQL query**: Analyze the SQL query and identify the key entities (tables, columns) and operations (joins, filters, aggregations). What is the query trying to extract from the database? For example, in the SQL query "SELECT COUNT(T1.Id) FROM users AS T1...," the focus is on counting the number of posts made by a user, which can help form a "How many" style question.
+  
+2. **Break down the question**: What specific details or relationships from the SQL query should be captured in the question? For instance, in the query "SELECT T1.client_id FROM client AS T1...", the question needs to reflect the user (client) and the condition of being female, and it asks "Who are the female account holders who own credit cards and also have loans?"
+
+3. **Match the schema**: Refer to the schema to understand the relationships between tables and their attributes. For example, in the query "SELECT DISTINCT t4.name FROM Player_Attributes AS t1...," the schema tells us that "name" is an attribute of "Country," and this helps form the question around the country of the players with certain attributes.
+
+4. **Formulate the question**: Based on the analysis, generate a clear, concise question that corresponds to the SQL query. Ensure the question is structured similarly to the examples provided. For instance, if the SQL query is about counting or summarizing certain data (like the "wins" in the race query), the question might follow the format of "How many times did [person] do [action]?"
+
+
+### Schema:
+{{ schema }}
+
+### Examples:
+
+SQL query: SELECT COUNT(T1.Id) FROM users AS T1 INNER JOIN postHistory AS T2 ON T1.Id = T2.UserId INNER JOIN posts AS T3 ON T2.PostId = T3.Id INNER JOIN votes AS T4 ON T4.PostId = T3.Id WHERE T1.DisplayName = 'Matt Parker' GROUP BY T2.PostId, T4.Id HAVING COUNT(T4.Id) > 4
+Question: How many posts by Matt Parker have more than 4 votes?
+
+SQL query: SELECT T1.client_id FROM client AS T1 INNER JOIN disp AS T2 ON T1.client_id = T2.client_id INNER JOIN account AS T5 ON T2.account_id = T5.account_id INNER JOIN loan AS T3 ON T5.account_id = T3.account_id INNER JOIN card AS T4 ON T2.disp_id = T4.disp_id WHERE T1.gender = 'F'
+Question: Who are the female account holders who own credit cards and also have loans?
+
+SQL query: SELECT DISTINCT t4.name FROM Player_Attributes AS t1 INNER JOIN Player AS t2 ON t1.player_api_id = t2.player_api_id INNER JOIN Match AS t3 ON t2.player_api_id = t3.home_player_8 INNER JOIN Country AS t4 ON t3.country_id = t4.id WHERE t1.vision > 89
+Question: Locate players with vision scores of 90 and above, state the country of these players.
+
+SQL query: SELECT SUM(T2.wins) FROM drivers AS T1 INNER JOIN driverStandings AS T2 ON T2.driverId = T1.driverId INNER JOIN races AS T3 ON T3.raceId = T2.raceId INNER JOIN circuits AS T4 ON T4.circuitId = T3.circuitId WHERE T1.forename = 'Michael' AND T1.surname = 'Schumacher' AND T4.name = 'Sepang International Circuit'
+Question: How many times did Michael Schumacher won from races hosted in Sepang International Circuit?
+
+SQL query: SELECT T2.publisher_name FROM superhero AS T1 INNER JOIN publisher AS T2 ON T1.publisher_id = T2.id INNER JOIN hero_attribute AS T3 ON T1.id = T3.hero_id INNER JOIN attribute AS T4 ON T3.attribute_id = T4.id WHERE T4.attribute_name = 'Speed' ORDER BY T3.attribute_value LIMIT 1
+Question: Which publisher published the slowest superhero?
+
+SQL query: "SELECT T2.forename, T2.surname FROM qualifying AS T1 INNER JOIN drivers AS T2 on T1.driverId = T2.driverId INNER JOIN races AS T3 ON T1.raceid = T3.raceid WHERE q3 IS NOT NULL AND T3.year = 2008 AND T3.circuitId IN ( SELECT circuitId FROM circuits WHERE name = 'Marina Bay Street Circuit' ) ORDER BY CAST(SUBSTR(q3, 1, INSTR(q3, ':') - 1) AS INTEGER) * 60 + CAST(SUBSTR(q3, INSTR(q3, ':') + 1, INSTR(q3, '.') - INSTR(q3, ':') - 1) AS REAL) + CAST(SUBSTR(q3, INSTR(q3, '.') + 1) AS REAL) / 1000 ASC LIMIT 1",
+Question: "What is full name of the racer who ranked 1st in the 3rd qualifying race held in the Marina Bay Street Circuit in 2008?",
+
+
+### Given the SQL query:
+SQL query: {{ main_query }}
+
+### Instructions:
+1. Follow the Chain of Thought reasoning steps to generate a question that matches the SQL query.
+2. Ensure that the question matches the style and format of the examples above. It should be clear, concise, and related to the SQL query.
+3. The question should be formatted as a single line with no additional explanations.
+4. Refer to the schema to better understand the relationships in the database. Make sure the question aligns with the schema and captures the important details of the query.

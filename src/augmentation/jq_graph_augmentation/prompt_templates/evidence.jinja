@@ -1,0 +1,50 @@
+Your task is to generate **evidence** for the given SQL query and question.
+
+The evidence refers to external knowledge needed to help map the **natural language question** to its corresponding **SQL query**, especially for values in filtering conditions and the meaning of projected values (i.e., what is being selected). This is useful when such details are **implicit** or not clearly stated in the question.
+
+You will be provided with the database **schema** and a few **examples**.
+
+When writing evidence:
+- Focus only on filtering conditions and projections.
+- You may mention column names, relevant values, and the names of the tables to which those columns belong—but only if they are involved in filtering or projection, not joins.
+For example, consider the question: Which accounts are held by male clients who have loans, placed orders, and possess credit cards?
+The correct evidence should be: Male clients refer to gender = 'M'; accounts refers to account.account_id.
+There is no need to mention tables involved in join conditions, such as: accounts with loans, orders, and credit cards involve account_id in account, loan, "order", and card tables. — this would be incorrect.
+- Do not mention any join conditions or join keys used in the SQL query (e.g., `Tab1.id1 = Tab2.id2`) or refer to the keys themselves (e.g., `id1` as a join key).
+- Your output must be **a single, concise line** starting with `Evidence:` and must contain **no additional explanation**.
+
+
+### Schema:
+{{ schema }}
+
+### Examples:
+
+SQL query: SELECT COUNT(T1.Id) FROM users AS T1 INNER JOIN postHistory AS T2 ON T1.Id = T2.UserId INNER JOIN posts AS T3 ON T2.PostId = T3.Id INNER JOIN votes AS T4 ON T4.PostId = T3.Id WHERE T1.DisplayName = 'Matt Parker' GROUP BY T2.PostId, T4.Id HAVING COUNT(T4.Id) > 4
+Question: How many posts by Matt Parker have more than 4 votes?
+Evidence: more than 4 votes refer to PostId > 4; DisplayName = 'Matt Parker'
+
+SQL query: SELECT T1.client_id FROM client AS T1 INNER JOIN disp AS T2 ON T1.client_id = T2.client_id INNER JOIN account AS T5 ON T2.account_id = T5.account_id INNER JOIN loan AS T3 ON T5.account_id = T3.account_id INNER JOIN card AS T4 ON T2.disp_id = T4.disp_id WHERE T1.gender = 'F'
+Question: Who are the female account holders who own credit cards and also have loans?
+Evidence: Female refers to gender = 'F'
+
+SQL query: SELECT DISTINCT t4.name FROM Player_Attributes AS t1 INNER JOIN Player AS t2 ON t1.player_api_id = t2.player_api_id INNER JOIN Match AS t3 ON t2.player_api_id = t3.home_player_8 INNER JOIN Country AS t4 ON t3.country_id = t4.id WHERE t1.vision > 89
+Question: Locate players with vision scores of 90 and above, state the country of these players.
+Evidence: vision scores of 90 and above refers to vision > 89
+
+SQL query: SELECT SUM(T2.wins) FROM drivers AS T1 INNER JOIN driverStandings AS T2 ON T2.driverId = T1.driverId INNER JOIN races AS T3 ON T3.raceId = T2.raceId INNER JOIN circuits AS T4 ON T4.circuitId = T3.circuitId WHERE T1.forename = 'Michael' AND T1.surname = 'Schumacher' AND T4.name = 'Sepang International Circuit'
+Question: How many times did Michael Schumacher won from races hosted in Sepang International Circuit?
+Evidence: win from races refers to max(points)
+
+SQL query: SELECT T2.publisher_name FROM superhero AS T1 INNER JOIN publisher AS T2 ON T1.publisher_id = T2.id INNER JOIN hero_attribute AS T3 ON T1.id = T3.hero_id INNER JOIN attribute AS T4 ON T3.attribute_id = T4.id WHERE T4.attribute_name = 'Speed' ORDER BY T3.attribute_value LIMIT 1
+Question: Which publisher published the slowest superhero?
+Evidence: the slowest superhero refers to attribute_name = 'Speed' where MIN(attribute_value); publisher refers to publisher_name
+
+### Now for the following SQL query and the question:
+
+**SQL query:**  
+{{ main_query }}
+**Question:**
+{{ question }}
+
+**Instructions:**  
+Generate a **single-line evidence** starting with `Evidence:` based on the query above. **Do not include anything else**.
