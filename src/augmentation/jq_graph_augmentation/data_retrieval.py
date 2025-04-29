@@ -1,8 +1,14 @@
 import pickle
 from pathlib import Path
+from src.core.logger.logger import Logger
+import sys
+import re
 
 
-def retrieve_all_dev_subgraphs(folder_path, logger):
+logger = Logger(__name__)
+
+
+def retrieve_all_dev_subgraphs(folder_path, n_tables):
     """
     Retrieve all subgraphs from the pickle files in the folder.
 
@@ -13,20 +19,36 @@ def retrieve_all_dev_subgraphs(folder_path, logger):
         list: A list of all subgraphs from the folder.
     """
     folder = Path(folder_path)
-    all_subgraphs = []
-    for file_name in folder.glob("join_patterns_*.pkl"):
-        try:
-            with file_name.open("rb") as f:
-                join_patterns = pickle.load(f)
-                all_subgraphs.extend(join_patterns)
-        except (ValueError, KeyError, pickle.UnpicklingError) as e:
-            logger.log(
-                level="warning",
-                action="file_skipped",
-                details={"file_name": file_name.name, "error": str(e)},
-            )
+    number_of_tables = [
+        int(re.search(r"join_patterns_(\d+)_tables", file.stem).group(1))
+        for file in folder.glob("join_patterns_*.pkl")
+    ]
+    if n_tables - 1 not in number_of_tables:
+        logger.log(
+            level="error",
+            action="Required number of tables is out of range. Please consider using a different number of tables.",
+            details={
+                "folder_path": folder_path,
+                "expected_file": f"join_patterns_{n_tables - 1}.pkl",
+            },
+        )
+        sys.exit(1)
 
-    return all_subgraphs
+    try:
+        with open(folder / f"join_patterns_{n_tables - 1}_tables.pkl", "rb") as f:
+            join_patterns = pickle.load(f)
+    except (ValueError, KeyError, pickle.UnpicklingError) as e:
+        logger.log(
+            level="error",
+            action="Failed to load subgraphs from file.",
+            details={
+                "file_name": f"join_patterns_{n_tables - 1}_tables.pkl",
+                "error": str(e),
+            },
+        )
+        sys.exit(1)
+
+    return join_patterns
 
 
 def load_schema(schema_path):
