@@ -99,7 +99,6 @@ def extend_graphs_and_gen_queries(
     db_file_path,
     graph_first,
 ):
-
     augmented_filtered_queries = []
     augmented_discarded_queries = []
 
@@ -128,7 +127,6 @@ def extend_graphs_and_gen_queries(
             )
 
             for src, dst in edge_combination[1]:
-
                 temp_subgraph.add_edge(src, dst, color="red")
                 temp_subgraph[src][dst]["label"] = schema.get_edge_data(src, dst)[
                     "label"
@@ -155,8 +153,8 @@ def extend_graphs_and_gen_queries(
                 extra_edges_caused_cycle = [
                     edge
                     for edge in cycle_edges
-                    if edge in edge_combination
-                    or (edge[1], edge[0]) in edge_combination
+                    if edge in edge_combination[1]
+                    or (edge[1], edge[0]) in edge_combination[1]
                 ]
                 if not extra_edges_caused_cycle:
                     continue
@@ -202,15 +200,11 @@ def extend_graphs_and_gen_queries(
                 seen_extra_node.update(canon_form.partition(":")[0].strip())
                 break
 
-        if not is_redundant:
-            break
-
         new_subgraph = {}
         new_subgraph["db_id"] = db_id
         new_subgraph["old_pattern_signature"] = subgraph["pattern_signature"]
         new_subgraph["old_subgraph"] = subgraph["subgraph"]
         new_subgraph["extended_subgraph"] = extended_subgraph
-
         # some mutation bug somewhere - extension leads to a list of queries and he wants to extend them.
         # a non-valid query followed by a valid query.
         extended_old_queries = deepcopy(
@@ -271,7 +265,9 @@ def validate_paths(aug_inputs_path, schema_path, db_file_path, query_stats_path)
         "query_stats_path": query_stats_path,
     }
 
-    missing_paths = [path for path in required_paths if not os.path.exists(path)]
+    missing_paths = [
+        path for path in required_paths.values() if not os.path.exists(path)
+    ]
     if missing_paths:
         logger.log(
             level="error",
