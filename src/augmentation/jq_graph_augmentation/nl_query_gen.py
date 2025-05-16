@@ -11,9 +11,13 @@ load_dotenv()
 
 
 def _generate_response(prompt_key, prompt_args, response_prefix):
-    prompt = [PromptRenderer("./prompt_templates").render(prompt_key, prompt_args)]
+    prompt = [
+        PromptRenderer(
+            os.path.join(os.path.dirname(__file__), "prompt_templates")
+        ).render(prompt_key, prompt_args)
+    ]
     messages = compose_chat_messages(user_messages=prompt)
-    model = ModelManager.get_model(
+    model = ModelManager.create_model(
         model_provider=ModelProvider.OPENAI,
         model_type=ModelType.COMPLETION,
         model_name=OpenAIModel.GPT_4O,

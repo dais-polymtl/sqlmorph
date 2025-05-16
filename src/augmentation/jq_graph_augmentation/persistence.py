@@ -13,10 +13,10 @@ def save_query_first(queries, output_file):
             {
                 "question_id": i,
                 "db_id": query["db_id"],
-                "question": query["question"],
-                "evidence": query["evidence"],
-                "SQL": query["SQL"],
-                "difficulty": query["difficulty"],
+                "question": query["query_first"]["question"],
+                "evidence": query["query_first"]["evidence"],
+                "SQL": query["query_first"]["SQL"],
+                "difficulty": query["query_first"]["difficulty"],
             }
         )
         extended_json_data.append(
@@ -24,9 +24,9 @@ def save_query_first(queries, output_file):
                 "question_id": i,
                 "db_id": query["db_id"],
                 "question": query["query_first"]["new_question"] or "",
-                "evidence": query["evidence"],
+                "evidence": query["query_first"]["evidence"],
                 "SQL": query["query_first"]["new_query"],
-                "difficulty": query["difficulty"],
+                "difficulty": query["query_first"]["difficulty"],
             }
         )
         sql_queries.append(query["query_first"]["new_query"] + "\t" + query["db_id"])
@@ -54,7 +54,8 @@ def save_graph_first(
     dev_set_like_json_data = []
     sql_queries = []
 
-    for i, query in enumerate(queries):
+    for i, full_query in enumerate(queries):
+        query = full_query["graph_first"]
         explicit_json_data.append(
             {
                 "question_id": i,
