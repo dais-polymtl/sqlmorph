@@ -6,6 +6,7 @@ from src.core.model_manager.openai_model import OpenAIModel
 
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 
@@ -92,35 +93,44 @@ def generate_new_extended_question(
 
 def gen_nl(filtered_aug, graph_first=False):
     data_folder = os.getenv("DATA_FOLDER")
-    for query in filtered_aug:
-        new_extended_question = generate_new_extended_question(
-            old_query=query["query_first"]["SQL"],
-            new_query=query["query_first"]["new_query"],
-            old_question=query["query_first"]["question"],
-            db_id=query["db_id"],
-            data_folder=data_folder,
-        )
-        query["query_first"]["new_question"] = new_extended_question
+    benchmark_path = os.path.join(data_folder, "benchmarks", "Bird")
+    with open(os.path.join(benchmark_path, "bird_dev.json"), "r") as f:
+        benchmark_data = json.load(f)
 
-        if graph_first:
+    benchmark_dict = {entry["question_id"]: entry for entry in benchmark_data}
+
+    for query in filtered_aug["queries"]:
+        match = benchmark_dict.get(query["ext_id"])
+        if match:
+            new_extended_question = generate_new_extended_question(
+                old_query=match["SQL"],
+                new_query=query["SQL"],
+                old_question=match["question"],
+                db_id=filtered_aug["db_id"],
+                data_folder=data_folder,
+            )
+        query["question"] = new_extended_question
+
+    if graph_first:
+        for query in filtered_aug["graph_first"]:
             explicit_question = generate_explicit_question(
-                main_query=query["graph_first"]["main_query"],
-                db_id=query["graph_first"]["db_id"],
+                main_query=query["SQL"],
+                db_id=filtered_aug["db_id"],
                 data_folder=data_folder,
             )
-            query["graph_first"]["explicit_question"] = explicit_question
+            query["explicit_question"] = explicit_question
             dev_set_like_question = generate_dev_set_like_question(
-                main_query=query["graph_first"]["main_query"],
-                db_id=query["graph_first"]["db_id"],
+                main_query=query["SQL"],
+                db_id=filtered_aug["db_id"],
                 data_folder=data_folder,
             )
-            query["graph_first"]["dev_set_like_question"] = dev_set_like_question
+            query["question"] = dev_set_like_question
             new_evidence = generate_evidence(
-                main_query=query["graph_first"]["main_query"],
-                schema=query["graph_first"]["schema"],
-                db_id=query["graph_first"]["db_id"],
-                question=new_extended_question,
+                main_query=query["SQL"],
+                db_id=filtered_aug["db_id"],
+                question=dev_set_like_question,
+                data_folder=data_folder,
             )
-            query["graph_first"]["new_evidence"] = new_evidence
+            query["evidence"] = new_evidence
 
     return filtered_aug

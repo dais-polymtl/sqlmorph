@@ -99,10 +99,17 @@ def extend_graphs_and_gen_queries(
     db_file_path,
     graph_first,
 ):
-    augmented_filtered_queries = []
-    augmented_discarded_queries = []
+    augmented_qf_filtered_queries = []
+    augmented_qf_discarded_queries = []
+    augmented_gf_filtered_queries = []
+    augmented_gf_discarded_queries = []
+    aug_fil_queries = {}
+    aug_dis_queries = {}
 
-    for subgraph in pre_aug_subgraphs:
+    aug_fil_queries["db_id"] = db_id
+    aug_dis_queries["db_id"] = db_id
+
+    for i, subgraph in enumerate(pre_aug_subgraphs):
         candidate_tables = find_candidate_table(schema, subgraph["subgraph"])
 
         all_edge_combinations = []
@@ -200,11 +207,11 @@ def extend_graphs_and_gen_queries(
                 seen_extra_node.update(canon_form.partition(":")[0].strip())
                 break
 
-        new_subgraph = {}
-        new_subgraph["db_id"] = db_id
-        new_subgraph["old_pattern_signature"] = subgraph["pattern_signature"]
-        new_subgraph["old_subgraph"] = subgraph["subgraph"]
-        new_subgraph["extended_subgraph"] = extended_subgraph
+        new_query_first = {}
+        new_graph_first = {}
+        new_query_first["id"] = "new_" + str(i)
+        new_graph_first["id"] = "new_" + str(i)
+
         # some mutation bug somewhere - extension leads to a list of queries and he wants to extend them.
         # a non-valid query followed by a valid query.
         extended_old_queries = deepcopy(
@@ -218,40 +225,49 @@ def extend_graphs_and_gen_queries(
             extended_old_queries, db_file_path
         )
         if extended_queries_validity:
-            new_subgraph["query_first"] = {
-                "question": extended_old_queries[0]["question"],
-                "evidence": extended_old_queries[0]["evidence"],
-                "SQL": extended_old_queries[0]["SQL"],
-                "difficulty": extended_old_queries[0]["difficulty"],
-                "flattened_query": extended_old_queries[0]["flattened_query"],
-                "new_query": extended_old_queries[0]["new_query"],
-            }
+            new_query_first.update(
+                {
+                    "ext_id": extended_old_queries[0]["question_id"],
+                    "evidence": extended_old_queries[0]["evidence"],
+                    "difficulty": extended_old_queries[0]["difficulty"],
+                    "SQL": extended_old_queries[0]["new_query"],
+                }
+            )
 
             if graph_first:
                 new_queries = translate_graph_into_query(
-                    pattern=new_subgraph["extended_subgraph"],
+                    pattern=extended_subgraph,
                     db_id=db_id,
                     df=df,
                     schema=schema,
                 )
                 add_values_to_translated_queries(new_queries, db_file_path)
-                new_queries = execute_new_queries(new_queries, db_file_path)
-                new_subgraph["graph_first"] = {
-                    "main_query": new_queries[0]["main_query"],
-                }
+                graph_first_queries = execute_new_queries(new_queries, db_file_path)
+                new_graph_first.update(
+                    {
+                        "SQL": graph_first_queries["main_query"],
+                        "difficulty": "challenging",
+                    }
+                )
         else:
             continue
 
         if is_pattern_in_old_list(
-            new_subgraph["extended_subgraph"], pre_aug_subgraphs
-        ) or is_pattern_in_old_list(
-            new_subgraph["extended_subgraph"], pre_aug_subgraphs
-        ):
-            augmented_discarded_queries.append(new_subgraph)
-        else:
-            augmented_filtered_queries.append(new_subgraph)
+            extended_subgraph, pre_aug_subgraphs
+        ) or is_pattern_in_old_list(extended_subgraph, pre_aug_subgraphs):
+            augmented_qf_discarded_queries.append(new_query_first)
+            augmented_gf_discarded_queries.append(new_graph_first)
 
-    return (augmented_filtered_queries, augmented_discarded_queries)
+        else:
+            augmented_qf_filtered_queries.append(new_query_first)
+            augmented_gf_filtered_queries.append(new_graph_first)
+
+        aug_fil_queries["queries"] = augmented_qf_filtered_queries
+        aug_dis_queries["queries"] = augmented_qf_discarded_queries
+        aug_fil_queries["graph_first"] = augmented_gf_filtered_queries
+        aug_dis_queries["graph_first"] = augmented_gf_discarded_queries
+
+    return (aug_fil_queries, aug_dis_queries)
 
 
 def validate_paths(aug_inputs_path, schema_path, db_file_path, query_stats_path):

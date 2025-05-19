@@ -229,7 +229,6 @@ def translate_graph_into_query(schema, pattern, db_id, df):
 
 
 def extend_old_query(extended_subgraph, old_subgraph, equivalent_queries):
-
     added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
     added_alias = "extra_table"
 
