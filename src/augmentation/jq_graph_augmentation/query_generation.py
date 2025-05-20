@@ -265,6 +265,9 @@ def extend_old_query(pattern):
 
     extended_old_queries = []
     for query in equivalent_queries:
+        # Create a copy of the query to avoid modifying the original
+        new_query_obj = query.copy()
+
         old_flattened_query = query["flattened_query"]
         old_sql = query["SQL"]
         old_flattened_query = old_flattened_query.replace("DATETIME()", '"DATETIME()"')
@@ -291,7 +294,6 @@ def extend_old_query(pattern):
             if "joins" not in parsed_old_query.args:
                 parsed_old_query.args["joins"] = []
 
-            # alias_counter = 1  # Counter for dynamically generating aliases for the new table
             join_conditions = []
             for join in added_joins:
                 left, right = join.split("=")
@@ -326,10 +328,12 @@ def extend_old_query(pattern):
                 parsed_old_query.args["joins"].append(join_expr)
 
         # Step 4: Convert back to SQL
-        new_query = parsed_old_query.sql()
-        if "order" in new_query:
-            new_query = new_query.replace("order", "'order'")
-        query["new_query"] = new_query
-        extended_old_queries.append(query)
+        sql_result = parsed_old_query.sql()
+        if "order" in sql_result:
+            sql_result = sql_result.replace("order", "'order'")
+
+        # Store the new query in our copy instead of modifying the original
+        new_query_obj["new_query"] = sql_result
+        extended_old_queries.append(new_query_obj)
 
     return extended_old_queries
