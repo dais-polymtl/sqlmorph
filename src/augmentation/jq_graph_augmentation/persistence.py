@@ -23,7 +23,7 @@ def save_query_first(queries, output_file):
             {
                 "question_id": query["id"],
                 "db_id": queries["db_id"],
-                "question": query["question"] or "",
+                "question": query.get("question", ""),
                 "evidence": query["evidence"],
                 "SQL": query["SQL"],
                 "difficulty": query["difficulty"],
@@ -67,7 +67,7 @@ def save_graph_first(
             {
                 "question_id": query["id"],
                 "db_id": queries["db_id"],
-                "question": query["explicit_question"] or "",
+                "question": query.get("explicit_question", ""),
                 "evidence": "",
                 "SQL": query["SQL"],
                 "difficulty": query["difficulty"],
@@ -77,8 +77,8 @@ def save_graph_first(
             {
                 "question_id": query["id"],
                 "db_id": queries["db_id"],
-                "question": query["question"] or "",
-                "evidence": query["evidence"] or "",
+                "question": query.get("question", ""),
+                "evidence": query.get("evidence", ""),
                 "SQL": query["SQL"],
                 "difficulty": query["difficulty"],
             }

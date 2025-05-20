@@ -67,7 +67,7 @@ def is_pattern_in_new_list(pattern, pattern_list):
     Check if a pattern or its isomorphic equivalent exists in the given list.
     """
     for existing_pattern in pattern_list:
-        if nx.is_isomorphic(pattern, existing_pattern["extended_subgraph"]):
+        if nx.is_isomorphic(pattern, existing_pattern):
             return True
     return False
 
@@ -79,10 +79,11 @@ def canonical_form(candidate_table, edge_combination):
             normalized_edges.append((u, v))
         else:
             normalized_edges.append((v, u))
-        normalized_edges.sort()
-        edge_strs = [f"({a}, {b})" for a, b in normalized_edges]
-        canonical = candidate_table + ": " + " -- ".join(edge_strs)
-        return canonical
+
+    normalized_edges.sort()
+    edge_strs = [f"({a}, {b})" for a, b in normalized_edges]
+    canonical = candidate_table + ": " + " -- ".join(edge_strs)
+    return canonical
 
 
 def sort_edge_combinations(edge_combinations):
@@ -103,12 +104,14 @@ def extend_graphs_and_gen_queries(
     augmented_qf_discarded_queries = []
     augmented_gf_filtered_queries = []
     augmented_gf_discarded_queries = []
+
+    kept_ext_subgraphs = []
+
     aug_fil_queries = {}
     aug_dis_queries = {}
 
     aug_fil_queries["db_id"] = db_id
     aug_dis_queries["db_id"] = db_id
-
     for i, subgraph in enumerate(pre_aug_subgraphs):
         candidate_tables = find_candidate_table(schema, subgraph["subgraph"])
 
@@ -123,8 +126,10 @@ def extend_graphs_and_gen_queries(
                         (canon_form, (candidate_table, edge_combination))
                     )
             all_edge_combinations.sort(key=sort_edge_combinations)
+
         seen_extra_node = set()
-        for canon_form, edge_combination in all_edge_combinations:
+        for i, (canon_form, edge_combination) in enumerate(all_edge_combinations):
+
             if canon_form.partition(":")[0].strip() in seen_extra_node:
                 continue
             temp_subgraph = subgraph["subgraph"].copy()
@@ -142,7 +147,7 @@ def extend_graphs_and_gen_queries(
             introduced_cycles = [
                 cycle
                 for cycle in nx.simple_cycles(temp_subgraph)
-                if candidate_table in cycle
+                if edge_combination[0] in cycle
             ]
             ### Let's pull this out to a function and Mo to review correctness.
             ### Let's add unit tests to be safe
@@ -204,68 +209,71 @@ def extend_graphs_and_gen_queries(
 
             if not is_redundant:
                 extended_subgraph = temp_subgraph
-                seen_extra_node.update(canon_form.partition(":")[0].strip())
-                break
+                seen_extra_node.add(canon_form.partition(":")[0].strip())
+            else:
+                continue
 
-        new_query_first = {}
-        new_graph_first = {}
-        new_query_first["id"] = "new_" + str(i)
-        new_graph_first["id"] = "new_" + str(i)
+            new_query_first = {}
+            new_graph_first = {}
+            new_query_first["id"] = "new_" + str(i)
+            new_graph_first["id"] = "new_" + str(i)
 
-        # some mutation bug somewhere - extension leads to a list of queries and he wants to extend them.
-        # a non-valid query followed by a valid query.
-        extended_old_queries = deepcopy(
-            extend_old_query(
-                equivalent_queries=subgraph["equivalent_queries"],
-                old_subgraph=subgraph["subgraph"],
-                extended_subgraph=extended_subgraph,
-            )
-        )
-        extended_old_queries, extended_queries_validity = execute_extended_queries(
-            extended_old_queries, db_file_path
-        )
-        if extended_queries_validity:
-            new_query_first.update(
-                {
-                    "ext_id": extended_old_queries[0]["question_id"],
-                    "evidence": extended_old_queries[0]["evidence"],
-                    "difficulty": extended_old_queries[0]["difficulty"],
-                    "SQL": extended_old_queries[0]["new_query"],
-                }
-            )
-
-            if graph_first:
-                new_queries = translate_graph_into_query(
-                    pattern=extended_subgraph,
-                    db_id=db_id,
-                    df=df,
-                    schema=schema,
+            # some mutation bug somewhere - extension leads to a list of queries and he wants to extend them.
+            # a non-valid query followed by a valid query.
+            extended_old_queries = deepcopy(
+                extend_old_query(
+                    equivalent_queries=subgraph["equivalent_queries"],
+                    old_subgraph=subgraph["subgraph"],
+                    extended_subgraph=extended_subgraph,
                 )
-                add_values_to_translated_queries(new_queries, db_file_path)
-                graph_first_queries = execute_new_queries(new_queries, db_file_path)
-                new_graph_first.update(
+            )
+            extended_old_queries, extended_queries_validity = execute_extended_queries(
+                extended_old_queries, db_file_path
+            )
+            if extended_queries_validity:
+                new_query_first.update(
                     {
-                        "SQL": graph_first_queries["main_query"],
-                        "difficulty": "challenging",
+                        "ext_id": extended_old_queries[0]["question_id"],
+                        "evidence": extended_old_queries[0]["evidence"],
+                        "difficulty": extended_old_queries[0]["difficulty"],
+                        "SQL": extended_old_queries[0]["new_query"],
                     }
                 )
-        else:
-            continue
 
-        if is_pattern_in_old_list(
-            extended_subgraph, pre_aug_subgraphs
-        ) or is_pattern_in_old_list(extended_subgraph, pre_aug_subgraphs):
-            augmented_qf_discarded_queries.append(new_query_first)
-            augmented_gf_discarded_queries.append(new_graph_first)
+                if graph_first:
+                    new_queries = translate_graph_into_query(
+                        pattern=extended_subgraph,
+                        db_id=db_id,
+                        df=df,
+                        schema=schema,
+                    )
+                    add_values_to_translated_queries(new_queries, db_file_path)
+                    graph_first_queries = execute_new_queries(new_queries, db_file_path)
+                    new_graph_first.update(
+                        {
+                            "SQL": graph_first_queries["main_query"],
+                            "difficulty": "challenging",
+                        }
+                    )
+            else:
+                continue
 
-        else:
-            augmented_qf_filtered_queries.append(new_query_first)
-            augmented_gf_filtered_queries.append(new_graph_first)
+            if is_pattern_in_old_list(
+                extended_subgraph, pre_aug_subgraphs
+            ) or is_pattern_in_new_list(extended_subgraph, kept_ext_subgraphs):
 
-        aug_fil_queries["queries"] = augmented_qf_filtered_queries
-        aug_dis_queries["queries"] = augmented_qf_discarded_queries
-        aug_fil_queries["graph_first"] = augmented_gf_filtered_queries
-        aug_dis_queries["graph_first"] = augmented_gf_discarded_queries
+                augmented_qf_discarded_queries.append(new_query_first)
+                augmented_gf_discarded_queries.append(new_graph_first)
+
+            else:
+                augmented_qf_filtered_queries.append(new_query_first)
+                augmented_gf_filtered_queries.append(new_graph_first)
+                kept_ext_subgraphs.append(extended_subgraph)
+
+            aug_fil_queries["queries"] = augmented_qf_filtered_queries
+            aug_dis_queries["queries"] = augmented_qf_discarded_queries
+            aug_fil_queries["graph_first"] = augmented_gf_filtered_queries
+            aug_dis_queries["graph_first"] = augmented_gf_discarded_queries
 
     return (aug_fil_queries, aug_dis_queries)
 

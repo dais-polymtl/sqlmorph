@@ -67,8 +67,14 @@ def execute_test_query_and_replace_placeholders(
 def add_values_to_translated_queries(pattern, db_path):
     test_query = pattern.get("test_query")
     main_query = pattern.get("main_query")
-    filtering_columns = pattern.get("filtering_columns")
+    main_query = (
+        main_query.replace("order", '"order"') if "order" in main_query else main_query
+    )
+    test_query = (
+        test_query.replace("order", '"order"') if "order" in test_query else test_query
+    )
 
+    filtering_columns = pattern.get("filtering_columns")
     final_query = execute_test_query_and_replace_placeholders(
         db_path, test_query, main_query, filtering_columns
     )

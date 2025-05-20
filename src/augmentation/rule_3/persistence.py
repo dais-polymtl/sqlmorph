@@ -7,10 +7,10 @@ def save_questions_to_file(dict_queries, output_base_dir, technique):
     os.makedirs(output_dir, exist_ok=True)  # Ensure the output directory exists
     original_questions = []
     new_questions = []
-
     # Iterate over db_ids and queries to collect original and new questions
     for db_id, queries in dict_queries.items():
         for i, query in enumerate(queries):
+
             original_entry = {
                 "question_id": i,
                 "db_id": db_id,
