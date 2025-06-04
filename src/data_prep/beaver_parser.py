@@ -2,7 +2,7 @@ import json
 import re
 import os
 import sqlparse
-from sqlparse.sql import Identifier, Comparison
+from sqlparse.sql import Comparison
 from sqlglot import parse_one, exp
 import logging
 from typing import List, Tuple, Dict, Any
@@ -496,6 +496,7 @@ def process_and_store_query(
         "evidence": query_entry.get("evidence", ""),
         "difficulty": query_entry.get("difficulty", ""),
         "flattened_query": original_sql_query if is_nested_query else "",
+        "question_id": query_entry.get("question_id", ""),
     }
 
     # Store in db_data

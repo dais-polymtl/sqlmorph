@@ -1,7 +1,6 @@
 import sqlglot
 from sqlglot import expressions as exp
 from sqlglot.expressions import Subquery
-import networkx as nx
 
 
 def get_table_data(schema, node_name):
@@ -17,8 +16,8 @@ def get_table_data(schema, node_name):
     """
     if node_name in schema.nodes:
         data = schema.nodes[node_name]
-        return data["table_name"], data["column_names"], data["column_types"]
-    return None, [], []
+        return data["table_name"]
+    return None
 
 
 def retrieve_projection_filter_columns(db_id, df, tables_involved):
@@ -101,27 +100,6 @@ def retrieve_projection_filter_columns(db_id, df, tables_involved):
     return projection_columns_with_tables, filtering_columns_with_tables
 
 
-def calculate_subgraph_centrality(subgraph, centrality_dict):
-    """
-    Calculate the average centrality for a given subgraph.
-    """
-    subgraph_nodes = list(subgraph.nodes())
-    return sum(centrality_dict.get(node, 0) for node in subgraph_nodes) / len(
-        subgraph_nodes
-    )
-
-
-def is_cyclic(subgraph):
-    """
-    Check if a given subgraph contains a cycle.
-    """
-    try:
-        nx.find_cycle(subgraph)
-        return True
-    except nx.NetworkXNoCycle:
-        return False
-
-
 def translate_graph_into_query(schema, pattern, db_id, df):
     """
     Generate an INNER JOIN SQL query and a test query for validation.
@@ -140,7 +118,7 @@ def translate_graph_into_query(schema, pattern, db_id, df):
 
     # Collect table data for each node in the subgraph using the schema
     for node in pattern.nodes():
-        table_name, columns, _ = get_table_data(schema, node)
+        table_name = get_table_data(schema, node)
         if table_name:
             tables.add(table_name)
 
@@ -250,10 +228,7 @@ def translate_graph_into_query(schema, pattern, db_id, df):
     }
 
 
-def extend_old_query(pattern):
-    extended_subgraph = pattern["extended_subgraph"]
-    equivalent_queries = pattern["equivalent_queries"]
-    old_subgraph = pattern["subgraph"]
+def extend_old_query(extended_subgraph, old_subgraph, equivalent_queries):
     added_table = list(set(extended_subgraph.nodes) - set(old_subgraph.nodes))[0]
     added_alias = "extra_table"
 
@@ -265,9 +240,7 @@ def extend_old_query(pattern):
 
     extended_old_queries = []
     for query in equivalent_queries:
-        # Create a copy of the query to avoid modifying the original
         new_query_obj = query.copy()
-
         old_flattened_query = query["flattened_query"]
         old_sql = query["SQL"]
         old_flattened_query = old_flattened_query.replace("DATETIME()", '"DATETIME()"')
@@ -328,11 +301,10 @@ def extend_old_query(pattern):
                 parsed_old_query.args["joins"].append(join_expr)
 
         # Step 4: Convert back to SQL
+        # new_query = parsed_old_query.sql()
         sql_result = parsed_old_query.sql()
         if "order" in sql_result:
             sql_result = sql_result.replace("order", "'order'")
-
-        # Store the new query in our copy instead of modifying the original
         new_query_obj["new_query"] = sql_result
         extended_old_queries.append(new_query_obj)
 
