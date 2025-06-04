@@ -240,9 +240,7 @@ def extend_old_query(extended_subgraph, old_subgraph, equivalent_queries):
 
     extended_old_queries = []
     for query in equivalent_queries:
-        # Create a copy of the query to avoid modifying the original
         new_query_obj = query.copy()
-
         old_flattened_query = query["flattened_query"]
         old_sql = query["SQL"]
         old_flattened_query = old_flattened_query.replace("DATETIME()", '"DATETIME()"')
@@ -303,11 +301,10 @@ def extend_old_query(extended_subgraph, old_subgraph, equivalent_queries):
                 parsed_old_query.args["joins"].append(join_expr)
 
         # Step 4: Convert back to SQL
+        # new_query = parsed_old_query.sql()
         sql_result = parsed_old_query.sql()
         if "order" in sql_result:
             sql_result = sql_result.replace("order", "'order'")
-
-        # Store the new query in our copy instead of modifying the original
         new_query_obj["new_query"] = sql_result
         extended_old_queries.append(new_query_obj)
 

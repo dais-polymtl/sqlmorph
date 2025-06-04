@@ -15,7 +15,6 @@ from query_execution import (
     execute_extended_queries,
     add_values_to_translated_queries,
 )
-from copy import deepcopy
 from src.core.logger.logger import Logger
 
 logger = Logger(__name__)
@@ -92,6 +91,82 @@ def sort_edge_combinations(edge_combinations):
     return (-num_edges, canon_form)
 
 
+def check_cycle_redundancy(temp_subgraph, edge_combination):
+    """
+    Determines if the added edges create a redundant cycle in the subgraph.
+
+    A cycle is considered redundant if the added edges don't introduce new
+    join paths beyond what's already implied by existing join keys.
+
+    Args:
+        temp_subgraph (networkx.DiGraph): The subgraph with added edges.
+        edge_combination (Tuple): Candidate extension edges and their canonical form.
+
+    Returns:
+        bool: True if the cycle is redundant, False otherwise.
+    """
+    introduced_cycles = [
+        cycle
+        for cycle in nx.simple_cycles(temp_subgraph)
+        if edge_combination[0] in cycle
+    ]
+
+    for cycle in introduced_cycles:
+        cycle_edges = [(cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)] + [
+            (cycle[-1], cycle[0])
+        ]
+
+        cycle_edge_labels = {
+            edge: temp_subgraph.get_edge_data(*edge)["label"] for edge in cycle_edges
+        }
+
+        extra_edges_caused_cycle = [
+            edge
+            for edge in cycle_edges
+            if edge in edge_combination[1] or (edge[1], edge[0]) in edge_combination[1]
+        ]
+
+        if not extra_edges_caused_cycle:
+            continue
+
+        all_label_list = [
+            cycle_edge_labels.get(edge, "").split(";")
+            for edge in extra_edges_caused_cycle
+        ]
+        label_combinations = list(product(*all_label_list))
+
+        join_keys = {
+            key.strip().lower()
+            for (t1, t2), condition in cycle_edge_labels.items()
+            for cond in condition.split(";")
+            if (t1, t2) not in extra_edges_caused_cycle
+            for key in cond.strip().split("=")
+        }
+
+        for label_set in label_combinations:
+            is_redundant = False
+            for i, label in enumerate(label_set):
+                edge = extra_edges_caused_cycle[i]
+                left, right = map(str.strip, label.split("="))
+
+                if i != len(label_set) - 1:
+                    join_keys.update([left.lower(), right.lower()])
+                    temp_subgraph[edge[0]][edge[1]]["label"] = label.strip()
+                elif left.lower() in join_keys and right.lower() in join_keys:
+                    is_redundant = True
+                else:
+                    temp_subgraph[edge[0]][edge[1]]["label"] = label.strip()
+                    is_redundant = False
+
+            if not is_redundant:
+                break
+
+        if is_redundant:
+            return True
+
+    return False
+
+
 def extend_graphs_and_gen_queries(
     pre_aug_subgraphs,
     db_id,
@@ -143,69 +218,7 @@ def extend_graphs_and_gen_queries(
                 temp_subgraph[src][dst]["label"] = schema.get_edge_data(src, dst)[
                     "label"
                 ]
-
-            introduced_cycles = [
-                cycle
-                for cycle in nx.simple_cycles(temp_subgraph)
-                if edge_combination[0] in cycle
-            ]
-            ### Let's pull this out to a function and Mo to review correctness.
-            ### Let's add unit tests to be safe
-            is_redundant = False
-
-            for cycle in introduced_cycles:
-                cycle_edges = [
-                    (cycle[i], cycle[i + 1]) for i in range(len(cycle) - 1)
-                ] + [(cycle[-1], cycle[0])]
-                cycle_edge_labels = {
-                    edge: temp_subgraph.get_edge_data(*edge)["label"]
-                    for edge in cycle_edges
-                }
-
-                extra_edges_caused_cycle = [
-                    edge
-                    for edge in cycle_edges
-                    if edge in edge_combination[1]
-                    or (edge[1], edge[0]) in edge_combination[1]
-                ]
-                if not extra_edges_caused_cycle:
-                    continue
-
-                all_label_list = [
-                    cycle_edge_labels.get(edge, "").split(";")
-                    for edge in extra_edges_caused_cycle
-                ]
-                label_combinations = list(product(*all_label_list))
-
-                join_keys = {
-                    key.strip().lower()
-                    for (t1, t2), condition in cycle_edge_labels.items()
-                    for cond in condition.split(";")
-                    if (t1, t2) not in extra_edges_caused_cycle
-                    for key in cond.strip().split("=")
-                }
-
-                for label_set in label_combinations:
-                    for i, label in enumerate(label_set):
-                        edge = extra_edges_caused_cycle[i]
-                        left, right = map(str.strip, label.split("="))
-
-                        if i != len(label_set) - 1:
-                            join_keys.update([left.lower(), right.lower()])
-                            temp_subgraph[edge[0]][edge[1]]["label"] = label.strip()
-
-                        elif left.lower() in join_keys and right.lower() in join_keys:
-                            is_redundant = True
-
-                        else:
-                            temp_subgraph[edge[0]][edge[1]]["label"] = label.strip()
-                            is_redundant = False
-
-                    if not is_redundant:
-                        break
-
-                if is_redundant:
-                    break
+            is_redundant = check_cycle_redundancy(temp_subgraph, edge_combination)
 
             if not is_redundant:
                 extended_subgraph = temp_subgraph
@@ -218,14 +231,10 @@ def extend_graphs_and_gen_queries(
             new_query_first["id"] = "new_" + str(i)
             new_graph_first["id"] = "new_" + str(i)
 
-            # some mutation bug somewhere - extension leads to a list of queries and he wants to extend them.
-            # a non-valid query followed by a valid query.
-            extended_old_queries = deepcopy(
-                extend_old_query(
-                    equivalent_queries=subgraph["equivalent_queries"],
-                    old_subgraph=subgraph["subgraph"],
-                    extended_subgraph=extended_subgraph,
-                )
+            extended_old_queries = extend_old_query(
+                equivalent_queries=subgraph["equivalent_queries"],
+                old_subgraph=subgraph["subgraph"],
+                extended_subgraph=extended_subgraph,
             )
             extended_old_queries, extended_queries_validity = execute_extended_queries(
                 extended_old_queries, db_file_path
