@@ -202,11 +202,7 @@ def extend_graphs_and_gen_queries(
                     )
             all_edge_combinations.sort(key=sort_edge_combinations)
 
-        seen_extra_node = set()
         for i, (canon_form, edge_combination) in enumerate(all_edge_combinations):
-
-            if canon_form.partition(":")[0].strip() in seen_extra_node:
-                continue
             temp_subgraph = subgraph["subgraph"].copy()
             nx.set_edge_attributes(
                 temp_subgraph,
@@ -222,7 +218,6 @@ def extend_graphs_and_gen_queries(
 
             if not is_redundant:
                 extended_subgraph = temp_subgraph
-                seen_extra_node.add(canon_form.partition(":")[0].strip())
             else:
                 continue
 

@@ -1,0 +1,50 @@
+Flatten the following nested SQL query into a single SQL query with only one SELECT statement:
+
+- Avoid using subqueries (including WITH/CTEs and nested SELECTs).
+- Use ORDER BY and LIMIT instead of subqueries for MAX(), MIN(), etc.
+- Use JOINs only when necessary; prefer window functions or conditional aggregation over subqueries.
+- Use CASE statements for conditional logic where applicable.
+- Ensure the flattened query produces the same result as the original.
+- Output a single-line SQL query with no newlines, no extra text, and no explanations.
+
+Example 1:  
+Original:  
+SELECT budget.budget_id FROM budget JOIN (SELECT MAX(amount) AS max_amount FROM budget) AS max_budget ON budget.amount = max_budget.max_amount WHERE budget.category = 'Food';  
+Flattened:  
+SELECT budget.budget_id FROM budget WHERE budget.category = 'Food' ORDER BY budget.amount DESC LIMIT 1;
+
+Example 2:  
+Original:  
+SELECT DISTINCT t1.player_name FROM Player AS t1 INNER JOIN Player_Attributes AS t2 ON t1.player_api_id = t2.player_api_id WHERE t2.overall_rating = (SELECT MAX(overall_rating) FROM Player_Attributes) ORDER BY t2.overall_rating DESC LIMIT 1;  
+Flattened:  
+SELECT DISTINCT t1.player_name FROM Player AS t1 INNER JOIN Player_Attributes AS t2 ON t1.player_api_id = t2.player_api_id ORDER BY t2.overall_rating DESC LIMIT 1;
+
+Example 3:  
+Original:  
+SELECT COUNT(DISTINCT T.element) FROM ( SELECT DISTINCT T2.molecule_id, T1.element FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id INNER JOIN bond AS T3 ON T2.molecule_id = T3.molecule_id WHERE T3.bond_type = '-' ) AS T  
+Flattened:  
+SELECT COUNT(DISTINCT T1.element) FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id INNER JOIN bond AS T3 ON T2.molecule_id = T3.molecule_id WHERE T3.bond_type = '-';
+
+Example 4:  
+Original:  
+WITH SubQuery AS (SELECT DISTINCT T1.atom_id, T1.element, T1.molecule_id, T2.label FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id WHERE T2.molecule_id = 'TR006') SELECT CAST(COUNT(CASE WHEN element = 'h' THEN atom_id ELSE NULL END) AS REAL) / (CASE WHEN COUNT(atom_id) = 0 THEN NULL ELSE COUNT(atom_id) END) AS ratio, label FROM SubQuery GROUP BY label  
+Flattened:  
+SELECT CAST(COUNT(CASE WHEN T1.element = 'h' THEN T1.atom_id ELSE NULL END) AS REAL) / NULLIF(COUNT(T1.atom_id), 0) AS ratio, T2.label FROM atom AS T1 INNER JOIN molecule AS T2 ON T1.molecule_id = T2.molecule_id WHERE T2.molecule_id = 'TR006' GROUP BY T2.label;
+
+Example 5:  
+Original:  
+SELECT AVG(single_bond_count) FROM (SELECT T3.molecule_id, COUNT(T1.bond_type) AS single_bond_count FROM bond AS T1  INNER JOIN atom AS T2 ON T1.molecule_id = T2.molecule_id INNER JOIN molecule AS T3 ON T3.molecule_id = T2.molecule_id WHERE T1.bond_type = '-' AND T3.label = '+' GROUP BY T3.molecule_id) AS subquery  
+Flattened:  
+SELECT AVG(COUNT(T1.bond_type)) OVER() FROM bond AS T1 INNER JOIN atom AS T2 ON T1.molecule_id = T2.molecule_id INNER JOIN molecule AS T3 ON T3.molecule_id = T2.molecule_id WHERE T1.bond_type = '-' AND T3.label = '+' GROUP BY T3.molecule_id;
+
+Example 6:  
+Original:  
+WITH MaxBanned AS (SELECT format, COUNT(*) AS count_banned FROM legalities WHERE status = 'Banned' GROUP BY format ORDER BY COUNT(*) DESC LIMIT 1) SELECT T2.format, T1.name FROM cards AS T1 INNER JOIN legalities AS T2 ON T2.uuid = T1.uuid INNER JOIN MaxBanned MB ON MB.format = T2.format WHERE T2.status = 'Banned'  
+Flattened:  
+SELECT T2.format, T1.name FROM cards AS T1 INNER JOIN legalities AS T2 ON T2.uuid = T1.uuid WHERE T2.status = 'Banned' AND T2.format = (SELECT format FROM legalities WHERE status = 'Banned' GROUP BY format ORDER BY COUNT(*) DESC LIMIT 1);
+
+Input SQL query:  
+{{ sql_query }}
+
+Output:  
+Just return the flattened SQL query as a **single-line string**, no subqueries, no explanations, no line breaks.
