@@ -2,15 +2,15 @@ import networkx as nx
 import os
 import pandas as pd
 from itertools import combinations, product
-from query_generation import (
+from .query_generation import (
     translate_graph_into_query,
     extend_old_query,
 )
-from data_retrieval import (
+from .data_retrieval import (
     retrieve_all_dev_subgraphs,
     load_schema,
 )
-from query_execution import (
+from .query_execution import (
     execute_new_queries,
     execute_extended_queries,
     add_values_to_translated_queries,
@@ -182,8 +182,8 @@ def extend_graphs_and_gen_queries(
 
     kept_ext_subgraphs = []
 
-    aug_fil_queries = {}
-    aug_dis_queries = {}
+    aug_fil_queries = {"queries": [], "graph_first": []}
+    aug_dis_queries = {"queries": [], "graph_first": []}
 
     aug_fil_queries["db_id"] = db_id
     aug_dis_queries["db_id"] = db_id
@@ -314,7 +314,7 @@ def aug_n_table_sql_queries(db_id, num_tables, graph_first=False):
     aug_inputs_path = os.path.join(rule_inputs_base, db_id)
     schema_path = os.path.join(graph_data_base, f"{db_id}_graph.pkl")
     db_file_path = os.path.join(
-        data_folder, "benchmarks", "Bird", "dev_databases", db_id, f"{db_id}.sqlite"
+        data_folder, "benchmarks", "Bird", "bird_databases", db_id, f"{db_id}.sqlite"
     )
     query_stats_path = os.path.join(rule_inputs_base, "query_statistics.csv")
 

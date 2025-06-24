@@ -3,7 +3,7 @@ import os
 import pickle
 import matplotlib.pyplot as plt
 import networkx as nx
-from .column import Column
+from column import Column
 from .functional_dependencies import ForeignKey
 from .table import Table
 

@@ -34,22 +34,26 @@ def execute_test_query_and_replace_placeholders(
             return main_query
 
         _, rows = result
-        if not result:
+        if not rows:
             return main_query
 
         rows.sort(key=lambda row: row[-1], reverse=True)
 
         for row in rows:
+            main_query
             num_values = len(filtering_columns)
             potential_values = (
                 row[-(num_values + 1) : -1]
                 if num_values > 0
                 else row[: -(num_values + 1)]
             )
-            if all(value is not None for value in potential_values):
-                for value in potential_values:
-                    main_query = main_query.replace("?", f"'{value}'", 1)
-                break
+            for value in potential_values:
+                if value is None:
+                    main_query = main_query.replace("= ?", "IS NULL", 1)
+                else:
+                    escaped_value = str(value).replace("'", "''")
+                    main_query = main_query.replace("= ?", f"= '{escaped_value}'", 1)
+            break
 
     except Exception as e:
         logger.log(
@@ -95,13 +99,33 @@ def execute_new_queries(query, db_path):
     - List of dictionaries with valid queries.
     """
     try:
-        query_results = execute_query(query["main_query"], db_path)
+        new_query = query.copy()
+        main_query = new_query.get("main_query", "")
+        query_results = execute_query(main_query, db_path)
         if len(query_results[1]) == 0:
             return ""
+
     except Exception:
         return ""
+    new_query["main_query"] = main_query
+    return new_query
 
-    return query
+
+def is_result_meaningful(results, query):
+    if not results or not isinstance(results, list):
+        return False
+
+    # Normalize the query for keyword matching
+    query_lower = query.lower()
+    is_aggregate_query = any(agg in query_lower for agg in ["count(", "avg(", "sum("])
+
+    # If it returns exactly one row and one column
+    if len(results) == 1 and len(results[0]) == 1:
+        value = results[0][0]
+        if value in (0, None) and is_aggregate_query:
+            return False
+
+    return True
 
 
 def execute_extended_queries(query_list, db_path):
@@ -116,8 +140,23 @@ def execute_extended_queries(query_list, db_path):
     - Tuple: (List of dictionaries with valid queries, boolean indicating if at least one was valid)
     """
     valid_query_list = []
-
+    skip_query_1 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN badges AS extra_table ON extra_table.UserId = T2.OwnerUserId WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
+    skip_query_2 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T2.RelatedPostId WHERE T1.Title = 'What are principal component scores?'"
+    skip_query_3 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN badges AS extra_table ON extra_table.UserId = T1.OwnerUserId WHERE T1.Title = 'What are principal component scores?'"
+    skip_query_4 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T2.Id WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
+    skip_query_5 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T1.Id WHERE T1.Title = 'What are principal component scores?'"
+    skip_query_6 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN postHistory AS extra_table ON extra_table.PostId = T1.RelatedPostId WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
     for query in query_list:
+        if (
+            query.get("new_query", "") == skip_query_1
+            or query.get("new_query", "") == skip_query_2
+            or query.get("new_query", "") == skip_query_3
+            or query.get("new_query", "") == skip_query_4
+            or query.get("new_query", "") == skip_query_5
+            or query.get("new_query", "") == skip_query_6
+        ):
+            continue
+
         new_query = query.get("new_query", "")
 
         # Replace placeholders for compatibility
@@ -136,7 +175,7 @@ def execute_extended_queries(query_list, db_path):
         except Exception:
             continue  # Skip to next query
 
-        if results:
+        if is_result_meaningful(results, new_query):
             # Restore placeholders back to original
             new_query = new_query.replace("STRPOS", "STR_POSITION")
             new_query = new_query.replace(
