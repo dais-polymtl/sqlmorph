@@ -1,0 +1,572 @@
+# evaluate_mutants.py
+"""
+Experiment 1 – Step 2 (parallel evaluation with multiple techniques)
+
+Goal
+────
+• Loads mutants.json produced in Step 1.
+• Evaluates each mutant using multiple evaluation techniques in parallel
+• Each technique produces its own separate results file
+• Extracts metrics EX / EXP / EXR / F1 and latency from Evaluation's return value
+
+Process
+───────
+1. Load mutants from Step 1
+2. Apply smart sampling (by complete question_id groups) and quality filtering
+3. For each evaluation technique:
+   - Create a separate evaluation run with technique-specific logging
+   - Use adaptive worker count (1 for API-heavy techniques, more for others)
+   - Use ThreadPoolExecutor with subprocess isolation (≤ 30s per query)
+   - Generate technique-specific output file
+4. Each mutant is evaluated inside its own short-lived subprocess with timeout
+5. Results are saved as separate JSON files per technique
+
+Sampling Strategy
+─────────────────
+• When SAMPLE_SIZE is set, we sample complete question_id groups (not individual mutants)
+• This ensures all depth levels (1, 2, 3) for each original query are included together
+• Quality filtering removes question_id groups where any mutant achieves EX=1
+  (suggests problematic queries where errors don't affect results)
+
+Worker Management
+─────────────────
+• API-heavy techniques (with embedding calls) use 1 worker to avoid rate limits
+• Non-API techniques can use multiple workers for faster processing
+• FORCE_SEQUENTIAL mode available to run everything with 1 worker
+
+Logging
+───────
+• Each evaluation technique gets its own log directory (logs_{technique_name})
+• Logs are saved alongside the mutant scores files for easy organization
+• LOG flag can be toggled to enable/disable detailed evaluation logging
+
+Performance
+───────────
+• Uses ThreadPoolExecutor with adaptive worker count per technique
+• Each query evaluation is isolated in subprocess with SIGALRM timeout
+• Guaranteed ≤ 30 seconds per individual query evaluation
+
+Output Files
+────────────
+• mutant_scores_exact_column_and_exact_cell.json
+• mutant_scores_unified_column_and_semantic_row.json
+• logs_exact_column_and_exact_cell/ (if LOG=True)
+• logs_unified_column_and_semantic_row/ (if LOG=True)
+• (Additional files based on EVALUATION_TECHNIQUES list)
+
+Configuration
+─────────────
+Edit SAMPLE_SIZE to a small integer for smoke-testing, or set it to
+None to score the entire dataset. Set LOG to True/False to control logging.
+Set FORCE_SEQUENTIAL to True to use 1 worker for all techniques.
+"""
+
+from __future__ import annotations
+import json
+import copy
+import os
+import signal
+import time
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import List, Dict
+from collections import defaultdict
+
+import multiprocessing as mp
+from tqdm import tqdm
+
+from src.evaluation import Evaluation, EvaluationTechnique
+from src.core.database.database_handler import DBMS
+from src.core.model_manager import OpenAIModel
+
+# ──────────────────────────────────────────────────────────────────────────
+# 0.  Paths, constants, and evaluation techniques
+# ──────────────────────────────────────────────────────────────────────────
+ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
+
+MUTANTS_JSON = ROOT / "data/evaluation/metrics/experiment_1/mutants.json"
+OUT_DIR = ROOT / "data/evaluation/metrics/experiment_1"
+DEV_DB_ROOT = ROOT / "data/benchmarks/Bird/dev_databases"
+
+# Multiple evaluation techniques to compare mutation impact across different metrics
+EVALUATION_TECHNIQUES = [
+    EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+    EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+    EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+]
+
+# Embedding model configuration for semantic evaluation techniques
+EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
+
+# Configuration options
+SAMPLE_SIZE = 120  # None → score all mutants; small int for quick test (applied to question groups)
+PER_QUERY_TIMEOUT = 60  # wall-clock seconds per individual query evaluation
+LOG = True  # Enable/disable detailed evaluation logging per technique
+FORCE_SEQUENTIAL = (
+    False  # Set to True to use 1 worker for all techniques (safest option)
+)
+
+# Techniques that use embedding API calls and should use fewer workers
+API_HEAVY_TECHNIQUES = {
+    EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+    EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+    EvaluationTechnique.SEMANTIC_COLUMN_AND_SEMANTIC_ROW,  # If you add this later
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 1.  Smart sampling and quality filtering functions
+# ──────────────────────────────────────────────────────────────────────────
+def group_mutants_by_question(mutants: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Group mutants by question_id to ensure complete sets are processed together.
+
+    Args:
+        mutants: List of mutant dictionaries
+
+    Returns:
+        Dictionary mapping question_id to list of mutants for that question
+    """
+    groups = defaultdict(list)
+    for mutant in mutants:
+        question_id = mutant["question_id"]
+        groups[question_id].append(mutant)
+
+    return dict(groups)
+
+
+def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[Dict]:
+    """
+    Apply smart sampling that maintains complete question_id groups.
+
+    When SAMPLE_SIZE is specified, we sample complete question groups rather than
+    individual mutants. This ensures all depth levels (1, 2, 3) for each original
+    query are included together for meaningful analysis.
+
+    Args:
+        mutants: List of all mutants
+        sample_size: Target number of mutants (approximate, since we keep complete groups)
+
+    Returns:
+        List of sampled mutants maintaining complete question groups
+    """
+    if sample_size is None:
+        return mutants
+
+    # Group by question_id
+    question_groups = group_mutants_by_question(mutants)
+
+    print(f"Original: {len(mutants)} mutants across {len(question_groups)} questions")
+
+    # Calculate how many question groups to sample
+    avg_mutants_per_question = len(mutants) / len(question_groups)
+    target_questions = max(1, int(sample_size / avg_mutants_per_question))
+    target_questions = min(target_questions, len(question_groups))
+
+    # Randomly sample question groups
+    random.seed(42)  # For reproducible sampling
+    sampled_question_ids = random.sample(list(question_groups.keys()), target_questions)
+
+    # Collect all mutants from sampled questions
+    sampled_mutants = []
+    for question_id in sampled_question_ids:
+        sampled_mutants.extend(question_groups[question_id])
+
+    print(
+        f"Sampled: {len(sampled_mutants)} mutants across {target_questions} questions"
+    )
+    print(f"Average mutants per question: {avg_mutants_per_question:.1f}")
+
+    return sampled_mutants
+
+
+def filter_problematic_questions(mutants: List[Dict]) -> List[Dict]:
+    """
+    Remove question groups where any mutant achieves EX=1.
+
+    If a mutant has EX=1 (perfect execution match), it suggests there's a problem
+    with the query (like generating null tables) where adding errors doesn't affect
+    the result. We remove the entire question group in such cases.
+
+    Args:
+        mutants: List of evaluated mutants (must have EX field)
+
+    Returns:
+        Filtered list of mutants with problematic questions removed
+    """
+    # Group by question_id and check for EX=1
+    question_groups = group_mutants_by_question(mutants)
+    problematic_questions = set()
+
+    for question_id, group_mutants in question_groups.items():
+        for mutant in group_mutants:
+            if mutant.get("EX") == 1:
+                problematic_questions.add(question_id)
+                break
+
+    # Filter out problematic question groups
+    filtered_mutants = []
+    for mutant in mutants:
+        if mutant["question_id"] not in problematic_questions:
+            filtered_mutants.append(mutant)
+
+    if problematic_questions:
+        removed_count = len(mutants) - len(filtered_mutants)
+        print(
+            f"  → Quality filter: Removed {len(problematic_questions)} problematic questions "
+            f"({removed_count} mutants) with EX=1"
+        )
+        print(
+            f"  → Remaining: {len(filtered_mutants)} mutants across "
+            f"{len(set(m['question_id'] for m in filtered_mutants))} questions"
+        )
+
+    return filtered_mutants
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 2.  Worker count management for different technique types
+# ──────────────────────────────────────────────────────────────────────────
+def get_optimal_worker_count(technique: EvaluationTechnique) -> int:
+    """
+    Determine optimal worker count based on technique type.
+
+    API-heavy techniques (with embedding calls) should use 1 worker to avoid:
+    - Rate limiting from the API provider
+    - Connection timeouts from concurrent requests
+    - API quota exhaustion
+
+    Non-API techniques can safely use multiple workers.
+
+    Args:
+        technique: The evaluation technique to analyze
+
+    Returns:
+        Optimal number of workers for this technique
+    """
+    if FORCE_SEQUENTIAL:
+        return 1
+
+    if technique in API_HEAVY_TECHNIQUES:
+        return 1  # Sequential processing for API-heavy techniques
+    else:
+        # Non-API techniques can use multiple workers
+        return min(4, max(1, os.cpu_count() // 2))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 3.  Subprocess worker – evaluates one mutant with SIGALRM timeout
+# ──────────────────────────────────────────────────────────────────────────
+def _worker(cfg: dict, pred_sql: str, gold_sql: str, q: mp.Queue):
+    """
+    Executes Evaluation.run_evaluation with a configurable timeout alarm.
+
+    This function runs in an isolated subprocess to prevent hanging
+    evaluations from blocking the entire pipeline. Uses SIGALRM for
+    strict timeout enforcement.
+
+    Args:
+        cfg: Evaluation configuration dictionary
+        pred_sql: Mutated SQL to evaluate
+        gold_sql: Ground truth SQL for comparison
+        q: Multiprocessing queue for result communication
+
+    Queue Output:
+        (metrics_dict, latency) on success
+        (None, -1) on error or timeout
+    """
+
+    def _timeout(_s, _f):
+        raise TimeoutError("Evaluation timeout exceeded")
+
+    signal.signal(signal.SIGALRM, _timeout)
+    signal.alarm(PER_QUERY_TIMEOUT)
+
+    start = time.time()
+    try:
+        ctx = Evaluation(cfg).run_evaluation(
+            predicted_sql=pred_sql,
+            ground_truth_sql=gold_sql,
+            log=LOG,  # Use configurable LOG flag
+        )
+        latency = ctx.get("latency", time.time() - start)
+        q.put((ctx["metrics"], latency))
+    except Exception:
+        # For debugging: could log the exception type/message
+        # print(f"Worker evaluation failed: {type(e).__name__}: {e}")
+        q.put((None, -1))
+    finally:
+        signal.alarm(0)  # cancel alarm to prevent signal leakage
+
+
+def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
+    """
+    Wrapper executed by the thread pool for each mutant evaluation.
+
+    Process:
+    1. Creates subprocess-specific config with correct database path
+    2. Spawns isolated subprocess for evaluation with timeout
+    3. Enforces wall-clock timeout and handles subprocess cleanup
+    4. Merges evaluation metrics back into mutant dictionary
+
+    Args:
+        mutant: Mutant dictionary containing SQL and metadata
+        template_cfg: Base evaluation configuration to copy
+
+    Returns:
+        Updated mutant dict with EX/EXP/EXR/F1/latency fields
+    """
+    # Create subprocess-specific config with correct database path
+    cfg = copy.deepcopy(template_cfg)
+    db_file = DEV_DB_ROOT / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
+    cfg["db_params"]["db_path"] = str(db_file)
+
+    # Spawn subprocess with timeout enforcement
+    q = mp.Queue(1)
+    p = mp.Process(
+        target=_worker, args=(cfg, mutant["mutated_sql"], mutant["gold_sql"], q)
+    )
+    p.start()
+    p.join(PER_QUERY_TIMEOUT)
+
+    # Handle subprocess cleanup and timeout
+    if p.is_alive():
+        p.terminate()
+        p.join()
+
+    # Extract results from subprocess
+    try:
+        metrics, latency = q.get_nowait()
+    except Exception:
+        metrics, latency = None, -1
+
+    # Merge evaluation results into mutant dictionary
+    if not metrics:
+        mutant.update(
+            {"EX": None, "EXP": None, "EXR": None, "F1": None, "latency": latency}
+        )
+    else:
+        mutant.update(
+            {
+                "EX": metrics.get("EX", 0),
+                "EXP": metrics.get("EXP", 0.0),
+                "EXR": metrics.get("EXR", 0.0),
+                "F1": metrics.get("F1", 0.0),
+                "latency": latency,
+            }
+        )
+    return mutant
+
+
+def get_technique_name(technique: EvaluationTechnique) -> str:
+    """
+    Convert evaluation technique enum to filename-safe string.
+
+    Args:
+        technique: EvaluationTechnique enum value
+
+    Returns:
+        Lowercase string suitable for filename
+    """
+    return technique.name.lower()
+
+
+def create_technique_log_dir(technique_name: str) -> str:
+    """
+    Create and return the log directory path for a specific technique.
+
+    Creates a logs_{technique_name} directory alongside the output files.
+
+    Args:
+        technique_name: Technique name (from get_technique_name)
+
+    Returns:
+        String path to the technique-specific log directory
+    """
+    log_dir = OUT_DIR / f"logs_{technique_name}"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return str(log_dir)
+
+
+def evaluate_with_technique(
+    mutants: List[Dict], technique: EvaluationTechnique
+) -> List[Dict]:
+    """
+    Evaluate all mutants using a specific evaluation technique.
+
+    Uses adaptive worker count: 1 for API-heavy techniques, more for others.
+
+    Args:
+        mutants: List of mutant dictionaries to evaluate
+        technique: Evaluation technique to use
+
+    Returns:
+        List of mutants with evaluation results added (filtered for quality)
+    """
+    technique_name = get_technique_name(technique)
+
+    # Create technique-specific log directory
+    log_dir_path = create_technique_log_dir(technique_name)
+
+    # Determine optimal worker count for this technique
+    max_workers = get_optimal_worker_count(technique)
+    is_api_heavy = technique in API_HEAVY_TECHNIQUES
+
+    # Create evaluation configuration template for this technique
+    eval_template = {
+        "evaluation_technique": technique,
+        "db_params": {"dbms": DBMS.SQLITE, "db_path": ""},  # db_path filled per query
+        "embedding_model": EMBEDDING_MODEL,
+        "logs_dir_path": log_dir_path,  # Technique-specific log directory
+    }
+
+    print(f"  → Evaluating {len(mutants):,} mutants with {technique.name}")
+    print(
+        f"  → Workers: {max_workers} {'(sequential for API safety)' if is_api_heavy else '(parallel)'}"
+    )
+    if LOG:
+        print(f"  → Logs: {log_dir_path}")
+
+    scored: List[dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        # Submit all evaluation tasks
+        futures = [
+            pool.submit(score_one_mutant, copy.deepcopy(m), eval_template)
+            for m in mutants
+        ]
+
+        # Collect results with progress tracking
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc=f"  {technique_name}",
+            ncols=80,
+        ):
+            scored.append(future.result())
+
+    # Apply quality filtering after evaluation
+    filtered_scored = filter_problematic_questions(scored)
+
+    return filtered_scored
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4.  Main evaluation routine
+# ──────────────────────────────────────────────────────────────────────────
+def main():
+    """
+    Main evaluation pipeline that processes mutants with multiple techniques.
+
+    Process:
+    1. Load mutants from Step 1
+    2. Apply smart sampling (by question groups) and quality filtering
+    3. For each evaluation technique:
+       - Determine optimal worker count (1 for API-heavy, more for others)
+       - Create technique-specific log directory
+       - Run complete evaluation suite with logging
+       - Apply quality filtering (remove questions with EX=1)
+       - Save technique-specific results
+    4. Generate summary statistics
+    """
+    print("=" * 60)
+    print("MUTANT EVALUATION - Multiple Techniques")
+    print("=" * 60)
+
+    # Load mutants from Step 1
+    print(f"Loading mutants from {MUTANTS_JSON}")
+    with MUTANTS_JSON.open() as f:
+        all_mutants: List[Dict] = json.load(f)
+
+    print(f"Loaded {len(all_mutants):,} total mutants")
+
+    # Apply smart sampling that maintains complete question groups
+    sampled_mutants = smart_sample_mutants(all_mutants, SAMPLE_SIZE)
+
+    # Set multiprocessing method for subprocess safety
+    mp.set_start_method("fork", force=True)  # safe for macOS / Jupyter
+
+    # Display configuration
+    print("Configuration:")
+    print(f"  Embedding model: {EMBEDDING_MODEL.value}")
+    print(f"  Per-query timeout: {PER_QUERY_TIMEOUT}s")
+    print(f"  Logging enabled: {LOG}")
+    print(f"  Force sequential: {FORCE_SEQUENTIAL}")
+    print(f"  Output directory: {OUT_DIR}")
+
+    # Show worker strategy
+    print("\nWorker Strategy:")
+    for technique in EVALUATION_TECHNIQUES:
+        workers = get_optimal_worker_count(technique)
+        is_api = technique in API_HEAVY_TECHNIQUES
+        print(
+            f"  {technique.name}: {workers} worker{'s' if workers > 1 else ''} "
+            f"{'(API-heavy)' if is_api else '(standard)'}"
+        )
+
+    # Evaluate with each technique and save separate results
+    print(f"\nEvaluating with {len(EVALUATION_TECHNIQUES)} different techniques:")
+
+    for i, technique in enumerate(EVALUATION_TECHNIQUES, 1):
+        technique_name = get_technique_name(technique)
+        print(f"\n[{i}/{len(EVALUATION_TECHNIQUES)}] {technique.name}")
+
+        # Run evaluation for this technique (includes quality filtering)
+        scored_mutants = evaluate_with_technique(sampled_mutants, technique)
+
+        # Save technique-specific results
+        out_file = OUT_DIR / f"mutant_scores_{technique_name}.json"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with out_file.open("w") as f:
+            json.dump(scored_mutants, f, indent=2)
+
+        # Calculate summary statistics
+        successful_evals = [m for m in scored_mutants if m.get("EX") is not None]
+        failed_evals = len(scored_mutants) - len(successful_evals)
+
+        if successful_evals:
+            avg_ex = sum(m["EX"] for m in successful_evals) / len(successful_evals)
+            avg_f1 = sum(m["F1"] for m in successful_evals) / len(successful_evals)
+            avg_latency = sum(m["latency"] for m in successful_evals) / len(
+                successful_evals
+            )
+
+            # Calculate depth distribution
+            depth_counts = {}
+            for m in successful_evals:
+                depth = m.get("depth", "unknown")
+                depth_counts[depth] = depth_counts.get(depth, 0) + 1
+
+            print(f"  → Results saved to {out_file.name}")
+            print(
+                f"  → Final dataset: {len(scored_mutants)} mutants across "
+                f"{len(set(m['question_id'] for m in scored_mutants))} questions"
+            )
+            print(
+                f"  → Success rate: {len(successful_evals)}/{len(scored_mutants)} "
+                f"({100 * len(successful_evals) / len(scored_mutants):.1f}%)"
+            )
+            if failed_evals > 0:
+                print(f"  → Failed evaluations: {failed_evals}")
+            print(f"  → Depth distribution: {dict(sorted(depth_counts.items()))}")
+            print(f"  → Average EX: {avg_ex:.3f}")
+            print(f"  → Average F1: {avg_f1:.3f}")
+            print(f"  → Average latency: {avg_latency:.2f}s")
+        else:
+            print(f"  → WARNING: All evaluations failed for {technique.name}")
+            print(f"  → Results saved to {out_file.name}")
+
+    print(f"\n{'=' * 60}")
+    print("EVALUATION COMPLETE")
+    print(f"Results saved in: {OUT_DIR}")
+    if LOG:
+        print(f"Logs saved in technique-specific subdirectories of: {OUT_DIR}")
+    print(f"{'=' * 60}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Entry-point
+# ──────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    main()
