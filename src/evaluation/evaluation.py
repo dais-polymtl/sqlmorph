@@ -11,6 +11,7 @@ from src.evaluation.metrics import (
     unified_column_and_semantic_row_matcher,
     exact_column_and_exact_cell_matcher,
     semantic_column_and_exact_cell_matcher,
+    execution_accuracy,
 )
 from src.core.database.database_handler import DBMS
 from src.core.logger import Logger
@@ -20,9 +21,12 @@ logger = Logger(__name__)
 
 
 class EvaluationTechnique(enum.Enum):
+    EXECUTION_ACCURACY = "execution_accuracy"
     EXACT_COLUMN_AND_EXACT_CELL = "exact_column_and_exact_cell"
     SEMANTIC_COLUMN_AND_EXACT_CELL = "semantic_column_and_exact_cell"
-    UNIFIED_COLUMN_AND_SEMANTIC_ROW = "unified_column_and_semantic_row"
+    UNIFIED_COLUMN_AND_SEMANTIC_ROW = (
+        "unified_column_and_semantic_row"  # Added new technique
+    )
 
 
 class Evaluation:
@@ -64,6 +68,15 @@ class Evaluation:
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
                 embedding_model=self.config["embedding_model"],
+            )
+        elif (
+            self.config["evaluation_technique"]
+            == EvaluationTechnique.EXECUTION_ACCURACY
+        ):
+            context = execution_accuracy.run_evaluation_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
             )
 
         if log:
@@ -116,11 +129,17 @@ class Evaluation:
 if __name__ == "__main__":
     # Example usage
     predicted_sql = """
-SELECT DISTINCT T1.bond_type FROM bond AS T1 INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 WHERE T3.element <> 'cl'
+    SELECT DISTINCT T1.bond_type 
+    FROM bond AS T1 
+    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 
+    WHERE T3.element <> 'cl'
     """
 
     ground_truth_sql = """
-SELECT DISTINCT T1.bond_type FROM bond AS T1 INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 ON T2.atom_id = T3.atom_id WHERE T3.element = 'cl'
+    SELECT DISTINCT T1.bond_type 
+    FROM bond AS T1 
+    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 ON T2.atom_id = T3.atom_id 
+    WHERE T3.element = 'cl'
     """
 
     # Single config dictionary that works for all techniques
@@ -138,4 +157,5 @@ SELECT DISTINCT T1.bond_type FROM bond AS T1 INNER JOIN connected AS T2 ON T1.bo
     res = exact_evaluator.run_evaluation(
         predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql, log=False
     )
-    print(res["metrics"], res["latency"])
+    print("Semantic Evaluation Results:")
+    print(f"Metrics: {res['metrics']}, Latency: {res['latency']}")
