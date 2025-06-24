@@ -8,6 +8,7 @@ logger = Logger(__name__)
 
 
 def execute_query(context: dict):
+    logger.log("debug", "function execute_query called")
     try:
         db_handler = DatabaseHandler(
             dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
@@ -27,6 +28,7 @@ def execute_query(context: dict):
                 "predicted_cells": len(pred_rows) * len(pred_cols),
             }
         )
+        return context
     except Exception as e:
         logger.log("error", "QUERY_EXECUTION_FAILED", {"error": str(e)})
         context.update(
@@ -39,11 +41,13 @@ def execute_query(context: dict):
                 "metrics": {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": 0},
             }
         )
+        return context
 
 
 def match_columns(context: dict):
+    logger.log("debug", "function match_columns called")
     if context["has_error"]:
-        return
+        return context
 
     gt_cols = context["gt_cols"]
     pred_cols = context["pred_cols"]
@@ -63,7 +67,7 @@ def match_columns(context: dict):
         context["matched_cells"] = 0
         context["ground_truth_cells"] = len(context["gt_rows"]) * len(gt_cols)
         context["predicted_cells"] = len(context["pred_rows"]) * len(pred_cols)
-        return
+        return context
 
     # Create index mappings for common columns
     gt_col_to_idx = {col: idx for idx, col in enumerate(gt_cols)}
@@ -88,10 +92,13 @@ def match_columns(context: dict):
         }
     )
 
+    return context
+
 
 def match_rows(context: dict):
+    logger.log("debug", "function match_rows called")
     if context["has_error"]:
-        return
+        return context
 
     gt_rows = context["gt_rows"]
     pred_rows = context["pred_rows"]
@@ -136,10 +143,13 @@ def match_rows(context: dict):
         }
     )
 
+    return context
+
 
 def assign_metrics(context: dict):
+    logger.log("debug", "function assign_metrics called")
     if context["has_error"]:
-        return
+        return context
 
     # Extract values from context
     matched_cells = context["matched_cells"]
@@ -162,7 +172,6 @@ def assign_metrics(context: dict):
 
         context["metrics"] = {"EX": ex, "EXP": exp, "EXR": exr, "F1": f1}
 
-    # Log results
     logger.log(
         "info",
         "EVALUATION_COMPLETE",
@@ -171,11 +180,10 @@ def assign_metrics(context: dict):
             "EXP": context["metrics"]["EXP"],
             "EXR": context["metrics"]["EXR"],
             "F1": context["metrics"]["F1"],
-            "MATCHED_CELLS": matched_cells,
-            "GROUND_TRUTH_CELLS": g_cells,
-            "PREDICTED_CELLS": p_cells,
         },
     )
+
+    return context
 
 
 def run_evaluation_pipeline(
@@ -193,10 +201,10 @@ def run_evaluation_pipeline(
 
     start_time = time.time()
 
-    execute_query(context)
-    match_columns(context)
-    match_rows(context)
-    assign_metrics(context)
+    context = execute_query(context)
+    context = match_columns(context)
+    context = match_rows(context)
+    context = assign_metrics(context)
 
     context["latency"] = time.time() - start_time
 

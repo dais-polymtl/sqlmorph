@@ -20,6 +20,7 @@ logger = Logger(__name__)
 
 
 def execute_query(context):
+    logger.log("debug", "function execute_query called")
     try:
         db_handler = DatabaseHandler(
             dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
@@ -37,6 +38,7 @@ def execute_query(context):
                 "has_error": False,
             }
         )
+        return context
 
     except Exception as e:
         logger.log("error", "QUERY_EXECUTION_FAILED", {"error": str(e)})
@@ -47,9 +49,11 @@ def execute_query(context):
                 "metrics": {"EXP": 0.0, "EXR": 0.0, "F1": 0.0, "EX": 0},
             }
         )
+        return context
 
 
 def match_columns(context):
+    logger.log("debug", "function match_columns called")
     if context["has_error"]:
         return context
 
@@ -109,9 +113,11 @@ def match_columns(context):
             "coverage_penalty": coverage_penalty,
         }
     )
+    return context
 
 
 def match_rows(context):
+    logger.log("debug", "function match_rows called")
     if context["has_error"]:
         return context
 
@@ -235,8 +241,11 @@ def match_rows(context):
         }
     )
 
+    return context
+
 
 def assign_metrics(context):
+    logger.log("debug", "function assign_metrics called")
     if context["has_error"]:
         return context
 
@@ -263,7 +272,19 @@ def assign_metrics(context):
 
     context["metrics"] = metrics
 
-    logger.log("INFO", "EVALUATION_COMPLETE", {"METRICS": metrics})
+    # Log results
+    logger.log(
+        "info",
+        "EVALUATION_COMPLETE",
+        {
+            "EX": context["metrics"]["EX"],
+            "EXP": context["metrics"]["EXP"],
+            "EXR": context["metrics"]["EXR"],
+            "F1": context["metrics"]["F1"],
+        },
+    )
+
+    return context
 
 
 def run_eval_pipeline(
@@ -283,10 +304,10 @@ def run_eval_pipeline(
 
     start_time = time.time()
 
-    execute_query(context)
-    match_columns(context)
-    match_rows(context)
-    assign_metrics(context)
+    context = execute_query(context)
+    context = match_columns(context)
+    context = match_rows(context)
+    context = assign_metrics(context)
 
     context["latency"] = time.time() - start_time
 
