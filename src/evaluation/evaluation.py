@@ -24,9 +24,7 @@ class EvaluationTechnique(enum.Enum):
     EXECUTION_ACCURACY = "execution_accuracy"
     EXACT_COLUMN_AND_EXACT_CELL = "exact_column_and_exact_cell"
     SEMANTIC_COLUMN_AND_EXACT_CELL = "semantic_column_and_exact_cell"
-    UNIFIED_COLUMN_AND_SEMANTIC_ROW = (
-        "unified_column_and_semantic_row"  # Added new technique
-    )
+    UNIFIED_COLUMN_AND_SEMANTIC_ROW = "unified_column_and_semantic_row"
 
 
 class Evaluation:
