@@ -20,8 +20,8 @@ def retrieve_all_dev_subgraphs(folder_path, n_tables):
     """
     folder = Path(folder_path)
     number_of_tables = [
-        int(re.search(r"join_patterns_(\d+)_tables", file.stem).group(1))
-        for file in folder.glob("join_patterns_*.pkl")
+        int(re.search(r"jq_graphs_(\d+)_tables", file.stem).group(1))
+        for file in folder.glob("jq_graphs_*_tables.pkl")
     ]
     if n_tables - 1 not in number_of_tables:
         logger.log(
@@ -29,20 +29,20 @@ def retrieve_all_dev_subgraphs(folder_path, n_tables):
             action="Required number of tables is out of range. Please consider using a different number of tables.",
             details={
                 "folder_path": folder_path,
-                "expected_file": f"join_patterns_{n_tables - 1}.pkl",
+                "expected_file": f"jq_graphs_{n_tables - 1}_tables.pkl",
             },
         )
         sys.exit(1)
 
     try:
-        with open(folder / f"join_patterns_{n_tables - 1}_tables.pkl", "rb") as f:
+        with open(folder / f"jq_graphs_{n_tables - 1}_tables.pkl", "rb") as f:
             join_patterns = pickle.load(f)
     except (ValueError, KeyError, pickle.UnpicklingError) as e:
         logger.log(
             level="error",
             action="Failed to load subgraphs from file.",
             details={
-                "file_name": f"join_patterns_{n_tables - 1}_tables.pkl",
+                "file_name": f"jq_graphs_{n_tables - 1}_tables.pkl",
                 "error": str(e),
             },
         )

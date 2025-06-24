@@ -98,7 +98,6 @@ def gen_nl(filtered_aug, graph_first=False):
         benchmark_data = json.load(f)
 
     benchmark_dict = {entry["question_id"]: entry for entry in benchmark_data}
-
     for query in filtered_aug["queries"]:
         match = benchmark_dict.get(query["ext_id"])
         if match:

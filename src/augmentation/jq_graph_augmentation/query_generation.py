@@ -1,6 +1,9 @@
 import sqlglot
 from sqlglot import expressions as exp
 from sqlglot.expressions import Subquery
+from functools import reduce
+import operator
+import re
 
 
 def get_table_data(schema, node_name):
@@ -97,6 +100,14 @@ def retrieve_projection_filter_columns(db_id, df, tables_involved):
     else:
         filtering_columns_with_tables = []
 
+    filtering_columns_with_tables = [
+        (table, f'"{col}"' if " " in col else col)
+        for table, col in filtering_columns_with_tables
+    ]
+    projection_columns_with_tables = [
+        (table, f'"{col}"' if " " in col else col)
+        for table, col in projection_columns_with_tables
+    ]
     return projection_columns_with_tables, filtering_columns_with_tables
 
 
@@ -182,14 +193,27 @@ def translate_graph_into_query(schema, pattern, db_id, df):
 
     # Apply WHERE conditions without unnecessary parentheses
     if where_conditions:
-        base_query = base_query.where(
-            where_conditions[0]
-        )  # Start with the first condition
-        for condition in where_conditions[1:]:
-            base_query = base_query.where(condition)  # Add remaining conditions
+        combined_conditions = reduce(operator.and_, where_conditions)
+        base_query = base_query.where(combined_conditions)
 
-    # Replace parentheses with an empty character in the SQL query string
-    main_query = base_query.sql().replace("(", "").replace(")", "")
+        def remove_simple_condition_parentheses(sql):
+            pattern = r"\(([\w\.]+)\s*=\s*([\w\.?]+)\)"
+
+            def replacer(match):
+                left = match.group(1)
+                right = match.group(2)
+                # Return without parentheses
+                return f"{left} = {right}"
+
+            prev_sql = None
+            new_sql = sql
+            while new_sql != prev_sql:
+                prev_sql = new_sql
+                new_sql = re.sub(pattern, replacer, new_sql)
+            return new_sql
+
+    main_query = base_query.sql()
+    main_query = remove_simple_condition_parentheses(main_query)
 
     # Now, generate the test query
     test_select_columns = [

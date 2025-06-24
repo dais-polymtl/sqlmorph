@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .column import Column
+from column import Column
 
 
 @dataclass

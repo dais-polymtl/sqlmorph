@@ -42,6 +42,10 @@ def main(args):
         filtered_aug,
         graph_first=args.graph_first,
     )
+    discarded_aug = gen_nl(
+        discarded_aug,
+        graph_first=args.graph_first,
+    )
     store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=args.graph_first)
 
 

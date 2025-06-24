@@ -1,7 +1,7 @@
 import json
-from .column import Column
-from .table import Table
-from .functional_dependencies import ForeignKey
+from column import Column
+from table import Table
+from functional_dependencies import ForeignKey
 from collections import defaultdict
 import os
 import networkx as nx
