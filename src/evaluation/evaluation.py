@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from metrics import (
+from src.evaluation.metrics import (
     unified_column_and_semantic_row_matcher,
     exact_column_and_exact_cell_matcher,
     semantic_column_and_exact_cell_matcher,
@@ -33,6 +33,7 @@ class Evaluation:
         self,
         predicted_sql: str,
         ground_truth_sql: str,
+        log: bool = True,
     ):
         context = None
         if (
@@ -65,7 +66,9 @@ class Evaluation:
                 embedding_model=self.config["embedding_model"],
             )
 
-        self._dump_logs(context)
+        if log:
+            self._dump_logs(context)
+        return context
 
     def _dump_logs(self, context):
         def json_serializer(obj):
@@ -113,34 +116,26 @@ class Evaluation:
 if __name__ == "__main__":
     # Example usage
     predicted_sql = """
-    SELECT T3.Phone
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
+SELECT DISTINCT T1.bond_type FROM bond AS T1 INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 WHERE T3.element <> 'cl'
     """
 
     ground_truth_sql = """
-    SELECT T1.Phone
-    FROM schools AS T1 
-    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
-    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 10;
+SELECT DISTINCT T1.bond_type FROM bond AS T1 INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 ON T2.atom_id = T3.atom_id WHERE T3.element = 'cl'
     """
 
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+        "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
         "db_params": {
             "dbms": DBMS.SQLITE,
-            "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
+            "db_path": "data/benchmarks/Bird/dev_databases/toxicology/toxicology.sqlite",
         },
         "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
         "logs_dir_path": "data/evaluation_outputs/",
     }
 
     exact_evaluator = Evaluation(config)
-    exact_evaluator.run_evaluation(
-        predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql
+    res = exact_evaluator.run_evaluation(
+        predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql, log=False
     )
+    print(res["metrics"], res["latency"])
