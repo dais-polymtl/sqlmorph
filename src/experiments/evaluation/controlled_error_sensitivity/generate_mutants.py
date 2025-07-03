@@ -5,9 +5,8 @@ Experiment 1 – Step 1 (controlled, sequential error addition)
 Goal
 ────
 For each gold SQL in BIRD-dev, apply atomic mutation operators sequentially,
-with errors increasing by one new operator per depth. If an operator doesn't
-apply at a given depth, we try another operator until we have exactly the
-desired number of operators applied:
+with errors increasing by one new operator per depth. We systematically try
+all applicable operators at each depth level to ensure comprehensive coverage:
 
     depth 1 :  1 error
     depth 2 :  1 + 1 new error
@@ -16,20 +15,21 @@ desired number of operators applied:
 
 Algorithm Overview
 ──────────────────
-The mutation generation follows a depth-based sequential approach:
+The mutation generation follows a depth-based exhaustive approach:
 
 1. **Sequential Error Addition**: For each depth level (1, 2, 3), we build upon
    the previous level by adding exactly one more error. This creates a controlled
    progression where we can measure the cumulative impact of multiple errors.
 
-2. **Operator Selection**: At each depth, we randomly select a new operator that:
+2. **Exhaustive Operator Selection**: At each depth, we systematically try ALL
+   available operators that:
    - Can be successfully applied to the current SQL
-   - Doesn't conflict with previously applied operators
-   - Actually modifies the AST (verified by attempting application)
+   - Don't conflict with previously applied operators
+   - Actually modify the AST (verified by attempting application)
 
 3. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
-   projection_drop + add_irrelevant_column). The algorithm detects and avoids
-   such conflicting combinations.
+   projection_drop + add_star_wildcard, limit_increase + limit_decrease).
+   The algorithm detects and avoids such conflicting combinations.
 
 4. **Validation**: Each mutation sequence is validated to ensure:
    - All operators can be applied successfully
@@ -38,29 +38,38 @@ The mutation generation follows a depth-based sequential approach:
 
 Mutation Operators
 ──────────────────
-We implement 7 atomic mutation operators that target different SQL components:
+We implement 12 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
-• `add_irrelevant_column` — Adds alias.* or bare * to SELECT list
+• `distinct_toggle` — Toggles DISTINCT on/off in a query
 
 **WHERE Clause Mutations:**
 • `predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
-• `condition_flip` — Flips comparison operators (= ↔ !=, > ↔ <, >= ↔ <=, etc.)
 
 **JOIN Mutations:**
-• `join_break` — Removes ON condition from a random JOIN, breaking the join logic
+• `join_type_change` — Changes JOIN type (e.g., INNER to LEFT or LEFT to INNER)
 
-**Aggregation Mutations:**
+**Aggregation and Grouping Mutations:**
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
+• `group_by_remove` — Removes the GROUP BY clause completely
+• `having_remove` — Removes the HAVING clause completely
 
-**ORDER BY Mutations:**
+**Result Limiting and Ordering Mutations:**
 • `order_remove` — Completely removes ORDER BY clause
+• `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
+• `limit_decrease` — Decreases existing LIMIT clause (makes it more restrictive, skips if limit=1)
+
+**Wildcard Mutations:**
+• `add_star_wildcard` — Adds * or alias.* to SELECT list
 
 Operator Conflicts
 ──────────────────
 Some operators are incompatible and shouldn't be applied together:
-• `projection_drop` ↔ `add_irrelevant_column` (they can cancel each other out)
+• Each operator conflicts with itself to prevent duplicate application
+• projection_drop conflicts with add_star_wildcard
+• limit_increase conflicts with limit_decrease
+• Other conflicts are defined in the OPERATOR_CONFLICTS dictionary
 
 The conflict detection system prevents selecting operators that would neutralize
 each other's effects, ensuring meaningful mutations at each depth level.
@@ -79,11 +88,11 @@ Correctness safeguards
     If they are structurally identical, the sequence is discarded.
 
 3.  **Conflict detection**
-    Some operators conflict with each other (e.g., add_irrelevant_column
+    Some operators conflict with each other (e.g., add_star_wildcard
     vs projection_drop). We avoid selecting conflicting operators in the
     same sequence.
 
-4.  **add_irrelevant_column** injects `alias.*` or bare `*`; we render
+4.  **add_star_wildcard** injects `alias.*` or bare `*`; we render
     SQL with `dialect="sqlite"` so sqlglot does not rewrite divisions
     into `NULLIF(x,0)`.
 
@@ -110,7 +119,7 @@ ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 BIRD_DEV_JSON = ROOT / "data/benchmarks/Bird/bird_dev.json"
 OUT_DIR = ROOT / "data/evaluation/metrics/experiment_1"
 OUT_FILE = OUT_DIR / "mutants.json"
-MAX_DEPTH = 2  # Set this value to the desired max depth
+MAX_DEPTH = 3  # Set this value to the desired max depth
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -205,18 +214,7 @@ def aggregation_swap(ast: SqlAst) -> bool:
     return False
 
 
-def order_remove(ast: SqlAst) -> bool:
-    """
-    Completely remove the ORDER BY clause.
-    This can change result ordering in cases where it matters for correctness.
-    """
-    if ast.args.get("order"):
-        ast.set("order", None)
-        return True
-    return False
-
-
-def add_irrelevant_column(ast: SqlAst) -> bool:
+def add_star_wildcard(ast: SqlAst) -> bool:
     """
     Inject alias.* or bare * into the SELECT list.
     This adds extra columns that weren't in the original query.
@@ -267,15 +265,127 @@ def condition_flip(ast: SqlAst) -> bool:
     return False
 
 
+def join_type_change(ast: SqlAst) -> bool:
+    """
+    Change JOIN type (e.g., INNER to LEFT or LEFT to INNER).
+    This alters result cardinality and inclusion of records without matches.
+    """
+    joins = list(ast.find_all(exp.Join))
+    j = _rc(joins)
+    if not j:
+        return False
+
+    # Define possible join type swaps
+    join_types = {
+        "": "LEFT",  # Default INNER JOIN -> LEFT JOIN
+        "LEFT": "",  # LEFT JOIN -> INNER JOIN
+        "RIGHT": "",  # RIGHT JOIN -> INNER JOIN
+        "FULL": "LEFT",  # FULL JOIN -> LEFT JOIN
+        "INNER": "LEFT",  # INNER JOIN -> LEFT JOIN
+    }
+
+    current_type = j.args.get("kind", "")
+    if current_type in join_types:
+        j.set("kind", join_types[current_type])
+        return True
+    return False
+
+
+def distinct_toggle(ast: SqlAst) -> bool:
+    """
+    Toggle DISTINCT on/off in a query.
+    This changes result cardinality by including/excluding duplicates.
+    """
+    sel = ast.find(exp.Select)
+    if not sel:
+        return False
+
+    # Get current distinct value
+    current_distinct = sel.args.get("distinct")
+
+    # Toggle distinct on/off
+    if current_distinct is None or current_distinct is False:
+        # Turn on DISTINCT - use an empty exp.Distinct object instead of a boolean
+        sel.set("distinct", exp.Distinct())
+    else:
+        # Turn off DISTINCT
+        sel.set("distinct", None)
+
+    return True
+
+
+def limit_modify(ast: SqlAst) -> bool:
+    """
+    Modify LIMIT clause: randomly increase or decrease the limit value.
+    If no LIMIT exists, add one with a random value.
+    If LIMIT is 1, only increase is possible (can't decrease further).
+    """
+    current_limit = ast.args.get("limit")
+
+    if current_limit:
+        # Modify existing limit
+        limit_value = current_limit.args.get("expression")
+        if isinstance(limit_value, exp.Literal) and limit_value.is_int:
+            current_val = int(limit_value.this)
+
+            # If current limit is 1, we can only increase
+            if current_val <= 1:
+                # Increase limit (make less restrictive)
+                new_value = current_val * 2 + random.randint(1, 5)
+                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+                return True
+
+            # Randomly choose to increase or decrease
+            if random.choice([True, False]):  # 50% chance for each
+                # Increase limit (make less restrictive)
+                new_value = current_val * 2 + random.randint(0, current_val)
+                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+                return True
+            else:
+                # Decrease limit (make more restrictive)
+                new_value = max(1, current_val // 2)
+                if new_value != current_val:  # Only if value actually changes
+                    ast.set(
+                        "limit", exp.Limit(expression=exp.Literal.number(new_value))
+                    )
+                    return True
+                # If new_value would be the same, try increasing instead
+                new_value = current_val * 2 + random.randint(1, 5)
+                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+                return True
+    else:
+        # No LIMIT exists, add a new one with random value between 10-50
+        ast.set(
+            "limit", exp.Limit(expression=exp.Literal.number(random.randint(10, 50)))
+        )
+        return True
+
+    return False
+
+
+def having_remove(ast: SqlAst) -> bool:
+    """
+    Remove the HAVING clause completely.
+    This breaks filtering on aggregate results.
+    """
+    if ast.args.get("having"):
+        ast.set("having", None)
+        return True
+    return False
+
+
 # Registry of all available mutation operators
 OPERATORS: Dict[str, callable] = {
     "projection_drop": projection_drop,
     "predicate_delete": predicate_delete,
     "join_break": join_break,
     "aggregation_swap": aggregation_swap,
-    "order_remove": order_remove,
-    "add_irrelevant_column": add_irrelevant_column,
+    "add_star_wildcard": add_star_wildcard,
     "condition_flip": condition_flip,
+    "join_type_change": join_type_change,
+    "distinct_toggle": distinct_toggle,
+    "limit_modify": limit_modify,
+    "having_remove": having_remove,
 }
 OP_NAMES = tuple(OPERATORS.keys())
 
@@ -284,13 +394,17 @@ OP_NAMES = tuple(OPERATORS.keys())
 # 2.  Define operator conflicts (operators that shouldn't be used together)
 # ────────────────────────────────────────────────────────────────────────
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
-    "projection_drop": {"projection_drop", "add_irrelevant_column"},
-    "add_irrelevant_column": {"add_irrelevant_column", "projection_drop"},
+    "projection_drop": {"projection_drop", "add_star_wildcard"},
+    "add_star_wildcard": {"add_star_wildcard", "projection_drop"},
+    "predicate_delete": {"predicate_delete"},
+    "join_break": {"join_break", "join_type_change"},
+    "join_type_change": {"join_type_change", "join_break"},
+    "aggregation_swap": {"aggregation_swap"},
     "condition_flip": {"condition_flip"},
-    "order_remove": {"order_remove"},
-    "join_break": {"join_break"},
-    # Add more conflicts as needed, e.g.:
-    # "predicate_delete": {"some_other_predicate_op"},
+    "distinct_toggle": {"distinct_toggle"},
+    "limit_modify": {"limit_modify"},
+    "having_remove": {"having_remove"},
+    # Add more conflicts as needed
 }
 
 
@@ -330,23 +444,26 @@ def apply_sequence(sql: str, seq: Tuple[str, ...]) -> str | None:
 # 4.  Generate mutants with sequential error addition (depth-based)
 # ────────────────────────────────────────────────────────────────────────
 def generate_mutation_suite(
-    depths: Tuple[int, ...] = (1, 2, 3),
     seed: int = 42,
 ) -> List[dict]:
     """
     Generate mutation suite with sequential error addition.
 
-    For each SQL query and each depth level:
-    1. Start with an empty operator sequence
-    2. For each error level (1 to depth):
-       - Filter out operators that conflict with already selected ones
-       - Try random operators until one successfully applies
-       - Add the working operator to the sequence
-    3. Save the mutant if we successfully applied the target number of operators
+    For each SQL query:
+    1. Try EVERY possible operator as a starting point (depth=1)
+    2. For each valid starting operator, build mutation sequences by systematically
+       adding operators:
+       - For each subsequent depth (2, 3), try adding EVERY other operator that:
+         * Doesn't conflict with already selected operators
+         * Successfully applies to the current SQL
+    3. Save all valid mutation sequences that reach the target depths
+
+    This exhaustive approach ensures we explore all possible valid combinations
+    of operators at each depth level, following the sequential rule where each
+    depth builds upon the previous with exactly one additional operator.
 
     Args:
-        depths: Tuple of depth levels to generate (currently unused, uses MAX_DEPTH)
-        seed: Random seed for reproducible results
+        seed: Random seed for reproducible results (used in operator internals)
 
     Returns:
         List of mutant dictionaries with metadata and mutated SQL
@@ -357,47 +474,57 @@ def generate_mutation_suite(
     for item in BIRD_DEV:
         sql, qid, db = item["SQL"], item["question_id"], item["db_id"]
 
-        for depth in range(1, MAX_DEPTH + 1):  # Generate mutants up to MAX_DEPTH
-            # Start with one error and sequentially add new errors per depth
-            operator_sequence = []
-            for base_error in range(depth):
-                operators_left = list(OPERATORS.keys())
-                # Filter out operators that conflict with already selected ones
-                operators_left = [
-                    op
-                    for op in operators_left
-                    if not has_conflict(op, operator_sequence)
-                ]
+        # Try EVERY operator as a starting point (depth=1)
+        valid_starting_sequences = []
+        for first_op in OPERATORS.keys():
+            if apply_sequence(sql, (first_op,)):
+                valid_starting_sequences.append([first_op])
+                # Add as depth 1 mutant
+                mutated_sql = apply_sequence(sql, (first_op,))
+                mutants.append(
+                    {
+                        "question_id": qid,
+                        "db_id": db,
+                        "depth": 1,
+                        "operators": [first_op],
+                        "mutated_sql": mutated_sql,
+                        "error_count": 1,
+                        "gold_sql": sql,
+                    }
+                )
 
-                # Start with one random operator for each level
-                while operators_left:
-                    op = random.choice(operators_left)
-                    new_ast = apply_sequence(sql, operator_sequence + [op])
-                    if new_ast is not None:
-                        operator_sequence.append(op)
-                        break
-                    else:
-                        operators_left.remove(op)  # remove non-working operator
+        # For depth 2 and 3, build upon each valid sequence from previous depth
+        current_sequences = valid_starting_sequences.copy()
 
-                if len(operator_sequence) != base_error + 1:
-                    # If we cannot apply enough operators, skip this path
-                    break
+        for depth in range(2, MAX_DEPTH + 1):
+            next_sequences = []
+            for sequence in current_sequences:
+                # Try adding EVERY possible next operator
+                for next_op in OPERATORS.keys():
+                    # Skip if operator conflicts with already selected ones
+                    if has_conflict(next_op, sequence):
+                        continue
 
-            # If the mutation was valid for this depth, save it
-            if len(operator_sequence) == depth:
-                final_mutated_sql = apply_sequence(sql, operator_sequence)
-                if final_mutated_sql:  # Double-check the sequence still works
-                    mutants.append(
-                        {
-                            "question_id": qid,
-                            "db_id": db,
-                            "depth": depth,
-                            "operators": operator_sequence,
-                            "mutated_sql": final_mutated_sql,
-                            "error_count": depth,
-                            "gold_sql": sql,
-                        }
-                    )
+                    # Try applying the extended sequence
+                    new_sequence = sequence + [next_op]
+                    mutated_sql = apply_sequence(sql, tuple(new_sequence))
+
+                    if mutated_sql:  # If successfully applied
+                        next_sequences.append(new_sequence)
+                        # Add as a valid mutant for this depth
+                        mutants.append(
+                            {
+                                "question_id": qid,
+                                "db_id": db,
+                                "depth": depth,
+                                "operators": new_sequence,
+                                "mutated_sql": mutated_sql,
+                                "error_count": depth,
+                                "gold_sql": sql,
+                            }
+                        )
+
+            current_sequences = next_sequences
 
     return mutants
 
@@ -407,8 +534,19 @@ def generate_mutation_suite(
 # ────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Generating mutants with sequential error addition …")
+    print("Systematically trying all possible operators at each depth level")
     suite = generate_mutation_suite()
     print(f"Generated {len(suite):,} mutants")
+
+    # Print depth distribution
+    depth_counts = {}
+    for mutant in suite:
+        depth = mutant["depth"]
+        depth_counts[depth] = depth_counts.get(depth, 0) + 1
+
+    print("Depth distribution:")
+    for depth in sorted(depth_counts.keys()):
+        print(f"  Depth {depth}: {depth_counts[depth]:,} mutants")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     with OUT_FILE.open("w") as f:
