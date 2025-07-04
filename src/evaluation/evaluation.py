@@ -102,9 +102,6 @@ class Evaluation:
         context = {} if context is None else context
         context.update({"evaluation_timestamp": timestamp})
 
-        for technique in EvaluationTechnique:
-            technique_dir = os.path.join(self.config["logs_dir_path"], technique.value)
-            os.makedirs(technique_dir, exist_ok=True)
         technique_dir = os.path.join(
             self.config["logs_dir_path"], self.config["evaluation_technique"].value
         )
@@ -153,7 +150,7 @@ if __name__ == "__main__":
 
     exact_evaluator = Evaluation(config)
     res = exact_evaluator.run_evaluation(
-        predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql, log=False
+        predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql, log=True
     )
     print("Semantic Evaluation Results:")
     print(f"Metrics: {res['metrics']}, Latency: {res['latency']}")
