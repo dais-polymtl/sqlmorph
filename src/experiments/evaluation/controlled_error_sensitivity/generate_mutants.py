@@ -28,8 +28,8 @@ The mutation generation follows a depth-based exhaustive approach:
    - Actually modify the AST (verified by attempting application)
 
 3. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
-   projection_drop + add_star_wildcard, limit_increase + limit_decrease).
-   The algorithm detects and avoids such conflicting combinations.
+   projection_drop + add_star_wildcard). The algorithm detects and avoids
+   such conflicting combinations.
 
 4. **Validation**: Each mutation sequence is validated to ensure:
    - All operators can be applied successfully
@@ -38,37 +38,34 @@ The mutation generation follows a depth-based exhaustive approach:
 
 Mutation Operators
 ──────────────────
-We implement 12 atomic mutation operators that target different SQL components:
+We implement 10 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
 • `distinct_toggle` — Toggles DISTINCT on/off in a query
+• `add_star_wildcard` — Adds * or alias.* to SELECT list
 
 **WHERE Clause Mutations:**
 • `predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
+• `condition_flip` — Flips comparison operators (=↔!=, >↔<, >=↔<=)
 
 **JOIN Mutations:**
+• `join_break` — Removes the ON condition from a JOIN clause
 • `join_type_change` — Changes JOIN type (e.g., INNER to LEFT or LEFT to INNER)
 
 **Aggregation and Grouping Mutations:**
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
-• `group_by_remove` — Removes the GROUP BY clause completely
 • `having_remove` — Removes the HAVING clause completely
 
-**Result Limiting and Ordering Mutations:**
-• `order_remove` — Completely removes ORDER BY clause
+**Result Limiting Mutations:**
 • `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
-• `limit_decrease` — Decreases existing LIMIT clause (makes it more restrictive, skips if limit=1)
-
-**Wildcard Mutations:**
-• `add_star_wildcard` — Adds * or alias.* to SELECT list
 
 Operator Conflicts
 ──────────────────
 Some operators are incompatible and shouldn't be applied together:
 • Each operator conflicts with itself to prevent duplicate application
 • projection_drop conflicts with add_star_wildcard
-• limit_increase conflicts with limit_decrease
+• join_break conflicts with join_type_change
 • Other conflicts are defined in the OPERATOR_CONFLICTS dictionary
 
 The conflict detection system prevents selecting operators that would neutralize
@@ -117,7 +114,7 @@ from sqlglot import parse_one, exp
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
 BIRD_DEV_JSON = ROOT / "data/benchmarks/Bird/bird_dev.json"
-OUT_DIR = ROOT / "data/evaluation/metrics/experiment_1"
+OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity"
 OUT_FILE = OUT_DIR / "mutants.json"
 MAX_DEPTH = 3  # Set this value to the desired max depth
 
@@ -314,45 +311,23 @@ def distinct_toggle(ast: SqlAst) -> bool:
     return True
 
 
-def limit_modify(ast: SqlAst) -> bool:
+def limit_increase(ast: SqlAst) -> bool:
     """
-    Modify LIMIT clause: randomly increase or decrease the limit value.
+    Increase LIMIT clause: adds or increases the limit value.
     If no LIMIT exists, add one with a random value.
-    If LIMIT is 1, only increase is possible (can't decrease further).
+    If LIMIT exists, increase it to make the query less restrictive.
     """
     current_limit = ast.args.get("limit")
 
     if current_limit:
-        # Modify existing limit
+        # Modify existing limit by increasing it
         limit_value = current_limit.args.get("expression")
         if isinstance(limit_value, exp.Literal) and limit_value.is_int:
             current_val = int(limit_value.this)
-
-            # If current limit is 1, we can only increase
-            if current_val <= 1:
-                # Increase limit (make less restrictive)
-                new_value = current_val * 2 + random.randint(1, 5)
-                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
-                return True
-
-            # Randomly choose to increase or decrease
-            if random.choice([True, False]):  # 50% chance for each
-                # Increase limit (make less restrictive)
-                new_value = current_val * 2 + random.randint(0, current_val)
-                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
-                return True
-            else:
-                # Decrease limit (make more restrictive)
-                new_value = max(1, current_val // 2)
-                if new_value != current_val:  # Only if value actually changes
-                    ast.set(
-                        "limit", exp.Limit(expression=exp.Literal.number(new_value))
-                    )
-                    return True
-                # If new_value would be the same, try increasing instead
-                new_value = current_val * 2 + random.randint(1, 5)
-                ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
-                return True
+            # Always increase limit (make less restrictive)
+            new_value = current_val * 2 + random.randint(1, 5)
+            ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+            return True
     else:
         # No LIMIT exists, add a new one with random value between 10-50
         ast.set(
@@ -384,7 +359,7 @@ OPERATORS: Dict[str, callable] = {
     "condition_flip": condition_flip,
     "join_type_change": join_type_change,
     "distinct_toggle": distinct_toggle,
-    "limit_modify": limit_modify,
+    "limit_increase": limit_increase,
     "having_remove": having_remove,
 }
 OP_NAMES = tuple(OPERATORS.keys())
@@ -402,7 +377,7 @@ OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
     "aggregation_swap": {"aggregation_swap"},
     "condition_flip": {"condition_flip"},
     "distinct_toggle": {"distinct_toggle"},
-    "limit_modify": {"limit_modify"},
+    "limit_increase": {"limit_increase"},
     "having_remove": {"having_remove"},
     # Add more conflicts as needed
 }
@@ -532,7 +507,11 @@ def generate_mutation_suite(
 # ────────────────────────────────────────────────────────────────────────
 # 5.  Entry-point – build and save mutants.json
 # ────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+def main():
+    """
+    Main function to generate mutants with sequential error addition
+    and save them to a JSON file.
+    """
     print("Generating mutants with sequential error addition …")
     print("Systematically trying all possible operators at each depth level")
     suite = generate_mutation_suite()
@@ -552,3 +531,7 @@ if __name__ == "__main__":
     with OUT_FILE.open("w") as f:
         json.dump(suite, f, indent=2)
     print(f"Mutants written to {OUT_FILE}")
+
+
+if __name__ == "__main__":
+    main()

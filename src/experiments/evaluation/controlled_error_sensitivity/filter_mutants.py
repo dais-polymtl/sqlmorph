@@ -34,10 +34,18 @@ import matplotlib.pyplot as plt
 # Configuration variables
 # ────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
-MUTANTS_JSON = ROOT / "data/evaluation/metrics/experiment_1/mutants.json"
-OUT_FILE = ROOT / "data/evaluation/metrics/experiment_1/mutants_error_patterns.json"
-STATS_FILE = ROOT / "data/evaluation/metrics/experiment_1/filter_mutants_stats.txt"
-PLOT_DISTRIBUTION = False  # Set to True to display depth distribution plots
+MUTANTS_JSON = (
+    ROOT / "data/evaluation/experiments/controlled_error_sensitivity/mutants.json"
+)
+OUT_FILE = (
+    ROOT
+    / "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
+)
+STATS_FILE = (
+    ROOT
+    / "data/evaluation/experiments/controlled_error_sensitivity/filter_mutants_stats.txt"
+)
+PLOT_DISTRIBUTION = True  # Set to True to display depth distribution plots
 
 
 def filter_sequential_mutations(

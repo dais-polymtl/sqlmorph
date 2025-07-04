@@ -25,6 +25,8 @@ Sampling Strategy
 ─────────────────
 • When SAMPLE_SIZE is set, we sample complete question_id groups (not individual mutants)
 • This ensures all depth levels (1, 2, 3) for each original query are included together
+• With SPECIFIC_PATTERNS set, we first filter to only include those specific error patterns
+• Then sample SAMPLE_SIZE questions from each pattern group
 • Quality filtering removes question_id groups where any mutant achieves EX=1
   (suggests problematic queries where errors don't affect results)
 
@@ -59,6 +61,7 @@ Configuration
 Edit SAMPLE_SIZE to a small integer for smoke-testing, or set it to
 None to score the entire dataset. Set LOG to True/False to control logging.
 Set FORCE_SEQUENTIAL to True to use 1 worker for all techniques.
+Set SPECIFIC_PATTERNS to define specific error patterns for evaluation.
 """
 
 from __future__ import annotations
@@ -84,10 +87,15 @@ from src.core.model_manager import OpenAIModel
 # 0.  Paths, constants, and evaluation techniques
 # ──────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
-
-MUTANTS_JSON = ROOT / "data/evaluation/metrics/experiment_1/mutants.json"
-OUT_DIR = ROOT / "data/evaluation/metrics/experiment_1"
 DEV_DB_ROOT = ROOT / "data/benchmarks/Bird/dev_databases"
+MUTANTS_JSON = (
+    ROOT
+    / "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
+)
+OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity/results/ex1"
+
+LOGS_DIR = OUT_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Multiple evaluation techniques to compare mutation impact across different metrics
 EVALUATION_TECHNIQUES = [
@@ -100,18 +108,24 @@ EVALUATION_TECHNIQUES = [
 EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
 # Configuration options
-SAMPLE_SIZE = 120  # None → score all mutants; small int for quick test (applied to question groups)
-PER_QUERY_TIMEOUT = 60  # wall-clock seconds per individual query evaluation
-LOG = True  # Enable/disable detailed evaluation logging per technique
-FORCE_SEQUENTIAL = (
-    False  # Set to True to use 1 worker for all techniques (safest option)
+SAMPLE_SIZE = (
+    5  # None → score all mutants; small int for quick test (applied to question groups)
 )
 
+# List of specific error patterns to evaluate
+SPECIFIC_PATTERNS = [
+    "having_remove → limit_modify → distinct_toggle",
+    "add_star_wildcard → distinct_toggle → limit_modify",
+    "predicate_delete → projection_drop → condition_flip",
+]  # Add your specific patterns here
+
+PER_QUERY_TIMEOUT = 60  # wall-clock seconds per individual query evaluation
+LOG = True  # Enable/disable detailed evaluation logging per technique
+FORCE_SEQUENTIAL = True  # Set to True to use 1 worker for all techniques
 # Techniques that use embedding API calls and should use fewer workers
 API_HEAVY_TECHNIQUES = {
     EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
     EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
-    EvaluationTechnique.SEMANTIC_COLUMN_AND_SEMANTIC_ROW,  # If you add this later
 }
 
 
@@ -136,47 +150,124 @@ def group_mutants_by_question(mutants: List[Dict]) -> Dict[str, List[Dict]]:
     return dict(groups)
 
 
+def group_mutants_by_error_pattern(mutants: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Group mutants by error_pattern to allow sampling by pattern type.
+
+    Args:
+        mutants: List of mutant dictionaries
+
+    Returns:
+        Dictionary mapping error_pattern to list of mutants with that pattern
+    """
+    groups = defaultdict(list)
+    for mutant in mutants:
+        # Skip mutants without error_pattern
+        if "error_pattern" not in mutant:
+            continue
+        error_pattern = mutant["error_pattern"]
+        groups[error_pattern].append(mutant)
+
+    return dict(groups)
+
+
+def filter_by_specific_patterns(
+    mutants: List[Dict], specific_patterns: List[str] = None
+) -> List[Dict]:
+    """
+    Filter mutants to only include those with specific error patterns.
+
+    Args:
+        mutants: List of mutant dictionaries
+        specific_patterns: List of specific error patterns to include
+
+    Returns:
+        List of mutants filtered by specific error patterns
+    """
+    if not specific_patterns:
+        return mutants
+
+    filtered_mutants = [
+        m for m in mutants if m.get("error_pattern") in specific_patterns
+    ]
+
+    # Count how many mutants we found for each pattern
+    pattern_counts = defaultdict(int)
+    for mutant in filtered_mutants:
+        pattern_counts[mutant.get("error_pattern")] += 1
+
+    print(f"\nFiltered mutants by {len(specific_patterns)} specific patterns:")
+    for pattern in specific_patterns:
+        count = pattern_counts.get(pattern, 0)
+        print(f"  → {pattern}: {count} mutants")
+
+    return filtered_mutants
+
+
 def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[Dict]:
     """
-    Apply smart sampling that maintains complete question_id groups.
+    Apply smart sampling that maintains complete question_id groups and filters by specific patterns.
 
-    When SAMPLE_SIZE is specified, we sample complete question groups rather than
-    individual mutants. This ensures all depth levels (1, 2, 3) for each original
-    query are included together for meaningful analysis.
+    Sampling strategy:
+    1. If SPECIFIC_PATTERNS is set, filter to only include those specific error patterns
+    2. From each pattern group, sample up to sample_size question groups
+    3. This ensures a diverse set of mutants across different error patterns
 
     Args:
         mutants: List of all mutants
-        sample_size: Target number of mutants (approximate, since we keep complete groups)
+        sample_size: Target number of mutants per pattern (None = all)
 
     Returns:
         List of sampled mutants maintaining complete question groups
     """
+    if sample_size is None and not SPECIFIC_PATTERNS:
+        return mutants
+
+    print(f"Original: {len(mutants)} mutants")
+
+    # If SPECIFIC_PATTERNS is defined, filter to those patterns
+    if SPECIFIC_PATTERNS:
+        filtered_mutants = filter_by_specific_patterns(mutants, SPECIFIC_PATTERNS)
+        print(
+            f"Filtered to {len(filtered_mutants)} mutants with {len(SPECIFIC_PATTERNS)} specific patterns"
+        )
+        mutants = filtered_mutants
+
+    # If we don't need to sample by size, return all filtered mutants
     if sample_size is None:
         return mutants
 
-    # Group by question_id
-    question_groups = group_mutants_by_question(mutants)
+    # Group by error_pattern first, then by question_id
+    pattern_groups = defaultdict(list)
+    for mutant in mutants:
+        pattern = mutant.get("error_pattern", "unknown")
+        pattern_groups[pattern].append(mutant)
 
-    print(f"Original: {len(mutants)} mutants across {len(question_groups)} questions")
-
-    # Calculate how many question groups to sample
-    avg_mutants_per_question = len(mutants) / len(question_groups)
-    target_questions = max(1, int(sample_size / avg_mutants_per_question))
-    target_questions = min(target_questions, len(question_groups))
-
-    # Randomly sample question groups
-    random.seed(42)  # For reproducible sampling
-    sampled_question_ids = random.sample(list(question_groups.keys()), target_questions)
-
-    # Collect all mutants from sampled questions
     sampled_mutants = []
-    for question_id in sampled_question_ids:
-        sampled_mutants.extend(question_groups[question_id])
+
+    # For each pattern group, sample up to sample_size question groups
+    for pattern, pattern_mutants in pattern_groups.items():
+        # Group by question_id
+        question_groups = group_mutants_by_question(pattern_mutants)
+
+        # Calculate how many question groups to sample
+        if len(question_groups) <= sample_size:
+            # If we have fewer question groups than the sample size, take all of them
+            sampled_question_ids = list(question_groups.keys())
+        else:
+            # Otherwise, randomly sample question groups
+            random.seed(42 + hash(pattern))  # Different seed per pattern for diversity
+            sampled_question_ids = random.sample(
+                list(question_groups.keys()), sample_size
+            )
+
+        # Collect all mutants from sampled questions
+        for question_id in sampled_question_ids:
+            sampled_mutants.extend(question_groups[question_id])
 
     print(
-        f"Sampled: {len(sampled_mutants)} mutants across {target_questions} questions"
+        f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions"
     )
-    print(f"Average mutants per question: {avg_mutants_per_question:.1f}")
 
     return sampled_mutants
 
@@ -341,13 +432,16 @@ def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
     except Exception:
         metrics, latency = None, -1
 
-    # Merge evaluation results into mutant dictionary
+    # Create a result dictionary with all original fields preserved
+    result = copy.deepcopy(mutant)
+
+    # Merge evaluation results into result dictionary
     if not metrics:
-        mutant.update(
+        result.update(
             {"EX": None, "EXP": None, "EXR": None, "F1": None, "latency": latency}
         )
     else:
-        mutant.update(
+        result.update(
             {
                 "EX": metrics.get("EX", 0),
                 "EXP": metrics.get("EXP", 0.0),
@@ -356,7 +450,7 @@ def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
                 "latency": latency,
             }
         )
-    return mutant
+    return result
 
 
 def get_technique_name(technique: EvaluationTechnique) -> str:
@@ -370,23 +464,6 @@ def get_technique_name(technique: EvaluationTechnique) -> str:
         Lowercase string suitable for filename
     """
     return technique.name.lower()
-
-
-def create_technique_log_dir(technique_name: str) -> str:
-    """
-    Create and return the log directory path for a specific technique.
-
-    Creates a logs_{technique_name} directory alongside the output files.
-
-    Args:
-        technique_name: Technique name (from get_technique_name)
-
-    Returns:
-        String path to the technique-specific log directory
-    """
-    log_dir = OUT_DIR / f"logs_{technique_name}"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    return str(log_dir)
 
 
 def evaluate_with_technique(
@@ -406,8 +483,8 @@ def evaluate_with_technique(
     """
     technique_name = get_technique_name(technique)
 
-    # Create technique-specific log directory
-    log_dir_path = create_technique_log_dir(technique_name)
+    # Use the single log directory for all techniques
+    log_dir_path = str(LOGS_DIR)
 
     # Determine optimal worker count for this technique
     max_workers = get_optimal_worker_count(technique)
@@ -418,7 +495,7 @@ def evaluate_with_technique(
         "evaluation_technique": technique,
         "db_params": {"dbms": DBMS.SQLITE, "db_path": ""},  # db_path filled per query
         "embedding_model": EMBEDDING_MODEL,
-        "logs_dir_path": log_dir_path,  # Technique-specific log directory
+        "logs_dir_path": log_dir_path,  # Single log directory for all techniques
     }
 
     print(f"  → Evaluating {len(mutants):,} mutants with {technique.name}")
@@ -460,7 +537,7 @@ def main():
 
     Process:
     1. Load mutants from Step 1
-    2. Apply smart sampling (by question groups) and quality filtering
+    2. Apply smart sampling (by specific patterns and question groups) and quality filtering
     3. For each evaluation technique:
        - Determine optimal worker count (1 for API-heavy, more for others)
        - Create technique-specific log directory
@@ -480,7 +557,7 @@ def main():
 
     print(f"Loaded {len(all_mutants):,} total mutants")
 
-    # Apply smart sampling that maintains complete question groups
+    # Apply smart sampling by specific patterns and question groups
     sampled_mutants = smart_sample_mutants(all_mutants, SAMPLE_SIZE)
 
     # Set multiprocessing method for subprocess safety
@@ -493,6 +570,9 @@ def main():
     print(f"  Logging enabled: {LOG}")
     print(f"  Force sequential: {FORCE_SEQUENTIAL}")
     print(f"  Output directory: {OUT_DIR}")
+    print(f"  Log directory: {LOGS_DIR}")  # Show the single log dir
+    print(f"  Sample size per pattern: {SAMPLE_SIZE}")
+    print(f"  Specific patterns: {SPECIFIC_PATTERNS}")
 
     # Show worker strategy
     print("\nWorker Strategy:")
@@ -561,7 +641,7 @@ def main():
     print("EVALUATION COMPLETE")
     print(f"Results saved in: {OUT_DIR}")
     if LOG:
-        print(f"Logs saved in technique-specific subdirectories of: {OUT_DIR}")
+        print(f"Logs saved in: {LOGS_DIR}")  # Show the single log dir
     print(f"{'=' * 60}")
 
 
