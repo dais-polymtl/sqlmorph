@@ -2,38 +2,74 @@
 """
 Experiment 1 – Sensitivity to Controlled Error Counts (Multi-Technique Analysis)
 ─────────────────────────────────────────────────────────────────────────────────
-This script reads all mutant_scores_*.json files (one per evaluation technique) and produces:
+This script reads all mutant_scores_*.json files (one per evaluation technique) from the
+specified directory and produces comprehensive analysis across multiple techniques and error patterns.
 
-1. **Figure 1** – mean score vs. operator types for each error pattern and technique:
-   • One row per error pattern
-   • Three plots in each row, one per technique
-   • X-axis shows operator types instead of simple integers
-   • Distinct colours / linestyles, slight transparency
-   • If a technique file doesn't exist, shows empty plot with "No Data" message
+**Data Requirements:**
+Each JSON file must contain records with the following structure:
+- error_count: number of errors introduced
+- error_pattern: identifier for the specific error pattern
+- operators: list of mutation operators applied
+- pattern_position: position of the current operator in the pattern (1-indexed)
+- EX, EXP, EXR, F1: evaluation metrics (0-1 scale)
 
-2. **Figure 2** - aggregate view of mean scores across all error patterns:
-   • Single row with three plots (one per technique)
-   • X-axis shows simple labels (e1, e2, e3...)
-   • Aggregated data from all error patterns
+**Generated Outputs:**
 
-3. **Table 1** – Spearman ρ and Kendall τ correlations between
-   error_count and each metric for each technique and error pattern.
-   • Rows with NaNs in a metric are ignored (nan_policy="omit")
-   • If fewer than two valid points remain (or all values equal),
-     the correlation is reported as NaN
+1. **Figure 1** – Error Pattern Analysis by Technique:
+   • Multi-row layout: one row per unique error pattern found in data
+   • Three columns: one plot per technique (up to 3 techniques supported)
+   • X-axis shows specific operator names extracted from the operators list and pattern_position
+   • Y-axis shows mean scores for metrics EX, EXP, EXR, F1
+   • Each metric plotted with distinct colors and line styles
+   • Empty plots with "No Data" message for missing technique files or patterns
+   • Saved as: figure1_error_patterns_multi_technique.png
 
-Artefacts are saved in the plots/ directory next to the scores files.
+2. **Figure 2** – Aggregated Analysis Across All Error Patterns:
+   • Single row with three columns (one per technique)
+   • X-axis shows simple error count labels (e1, e2, e3...)
+   • Y-axis shows mean scores aggregated across all error patterns
+   • Same metrics and styling as Figure 1
+   • Overall title: "Aggregated Metrics Across All Error Patterns"
+   • Saved as: figure2_aggregate_multi_technique.png
+
+3. **Table 1** – Statistical Correlation Analysis:
+   • CSV file containing Spearman ρ and Kendall τ correlations
+   • Correlations computed between error_count and each metric (EX, EXP, EXR, F1)
+   • Separate analysis for each technique and error pattern combination
+   • Robust handling: NaN values ignored, insufficient data points return NaN
+   • Zero variance detection (all values identical) handled gracefully
+   • Columns: technique, error_pattern, metric, spearman_rho, kendall_tau
+   • Saved as: table1_correlations_by_pattern_technique.csv
+
+**Key Features:**
+- Automatic discovery of technique files using glob pattern matching
+- Dynamic error pattern detection from data (supports any number of patterns)
+- Robust error handling for missing files, incomplete data, or statistical edge cases
+- Intelligent operator labeling using pattern_position to extract specific operators
+- Fallback mechanisms for backward compatibility with older data formats
+- Comprehensive console output with processing summaries and correlation results
+
+**Directory Structure:**
+- Input: data/evaluation/experiments/controlled_error_sensitivity/scores/ex1/
+- Output: Same directory + /plots/ subdirectory (auto-created)
+- File pattern: mutant_scores_{technique_name}.json
+
+**Error Handling:**
+- Missing technique files: empty plots with appropriate messages
+- Missing error patterns: filtered out gracefully
+- Statistical computation failures: NaN values with detailed logging
+- Insufficient data points: correlation marked as NaN with reason tracking
 """
 
-from pathlib import Path
-import json
 import glob
-import warnings
+import json
 import re
+import warnings
+from pathlib import Path
 
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from scipy.stats import spearmanr, kendalltau
 
 # ────────────────────────────────────────────────────────────────────────
@@ -41,7 +77,9 @@ from scipy.stats import spearmanr, kendalltau
 # ────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
-SCORES_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity"
+SCORES_DIR = (
+    ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex3"
+)
 PLOTS_DIR = SCORES_DIR / "plots"
 FIGURE_PATH = PLOTS_DIR / "figure1_error_patterns_multi_technique.png"
 AGGREGATE_FIGURE_PATH = PLOTS_DIR / "figure2_aggregate_multi_technique.png"
