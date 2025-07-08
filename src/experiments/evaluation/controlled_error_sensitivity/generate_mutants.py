@@ -28,8 +28,8 @@ The mutation generation follows a depth-based exhaustive approach:
    - Actually modify the AST (verified by attempting application)
 
 3. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
-   projection_drop + add_star_wildcard). The algorithm detects and avoids
-   such conflicting combinations.
+   each operator conflicts with itself to prevent duplicate application).
+   The algorithm detects and avoids such conflicting combinations.
 
 4. **Validation**: Each mutation sequence is validated to ensure:
    - All operators can be applied successfully
@@ -38,7 +38,7 @@ The mutation generation follows a depth-based exhaustive approach:
 
 Mutation Operators
 ──────────────────
-We implement 10 atomic mutation operators that target different SQL components:
+We implement 11 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
@@ -47,60 +47,60 @@ We implement 10 atomic mutation operators that target different SQL components:
 
 **WHERE Clause Mutations:**
 • `predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
-• `condition_flip` — Flips comparison operators (=↔!=, >↔<, >=↔<=)
+• `where_condition_flip` — Flips comparison operators in WHERE clauses (=↔!=, >↔<, >=↔<=)
+
+**HAVING Clause Mutations:**
+• `having_condition_flip` — Flips comparison operators in HAVING clauses (=↔!=, >↔<, >=↔<=)
+• `having_remove` — Removes the HAVING clause completely
 
 **JOIN Mutations:**
 • `join_break` — Removes the ON condition from a JOIN clause
 • `join_type_change` — Changes JOIN type (e.g., INNER to LEFT or LEFT to INNER)
 
-**Aggregation and Grouping Mutations:**
+**Aggregation Mutations:**
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
-• `having_remove` — Removes the HAVING clause completely
 
 **Result Limiting Mutations:**
 • `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
 
 Operator Conflicts
 ──────────────────
-Some operators are incompatible and shouldn't be applied together:
-• Each operator conflicts with itself to prevent duplicate application
-• projection_drop conflicts with add_star_wildcard
-• join_break conflicts with join_type_change
-• Other conflicts are defined in the OPERATOR_CONFLICTS dictionary
+Each operator conflicts with itself to prevent duplicate application within
+the same mutation sequence. This ensures that each operator type is applied
+at most once per sequence, maintaining meaningful and distinct mutations.
 
 The conflict detection system prevents selecting operators that would neutralize
-each other's effects, ensuring meaningful mutations at each depth level.
+each other's effects or create redundant mutations, ensuring each sequence
+produces a unique and meaningful variant.
 
 Correctness safeguards
 ──────────────────────
 1.  **Each operator returns a boolean**
     • True  → it modified the AST.
-    • False → it could not apply and the whole permutation is abandoned.
+    • False → it could not apply and the whole sequence is abandoned.
 
 2.  **Final structural equality check**
     Even if every operator claims "changed", a later operator might UNDO
-    the change (e.g., add * then drop it).
-    We compare the fully-mutated AST with the original AST using
-    `ast.equals(original_ast)`.
+    the change. We compare the fully-mutated AST with the original AST.
     If they are structurally identical, the sequence is discarded.
 
 3.  **Conflict detection**
-    Some operators conflict with each other (e.g., add_star_wildcard
-    vs projection_drop). We avoid selecting conflicting operators in the
-    same sequence.
+    Each operator conflicts with itself to prevent duplicate application.
+    We avoid selecting conflicting operators in the same sequence.
 
-4.  **add_star_wildcard** injects `alias.*` or bare `*`; we render
-    SQL with `dialect="sqlite"` so sqlglot does not rewrite divisions
-    into `NULLIF(x,0)`.
+4.  **SQL Rendering**
+    All SQL is rendered with `dialect="sqlite"` to ensure consistent
+    output formatting and prevent unexpected transformations.
 
 Output
 ──────
-`data/evaluation/metrics/experiment_1/mutants.json`
+`data/evaluation/experiments/controlled_error_sensitivity/mutants.json`
 with keys:
     question_id · db_id · depth · operators[] · mutated_sql · error_count · gold_sql
 """
 
 from __future__ import annotations
+
 import json
 import random
 from pathlib import Path
@@ -109,7 +109,7 @@ from typing import Dict, List, Tuple, Set
 from sqlglot import parse_one, exp
 
 # ────────────────────────────────────────────────────────────────────────
-# Config – adjust paths for your workspace
+# Config
 # ────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
@@ -119,9 +119,7 @@ OUT_FILE = OUT_DIR / "mutants.json"
 MAX_DEPTH = 3  # Set this value to the desired max depth
 
 
-# ────────────────────────────────────────────────────────────────────────
 # Load BIRD-dev once
-# ────────────────────────────────────────────────────────────────────────
 def load_json(path: Path) -> list:
     with path.open() as f:
         return json.load(f)
@@ -203,11 +201,56 @@ def aggregation_swap(ast: SqlAst) -> bool:
     - MIN ↔ MAX (changes from smallest to largest)
     - COUNT → SUM (changes from count to sum, often meaningless)
     """
-    aggs = [f for f in ast.find_all(exp.Func) if f.name.lower() in _AGG_SWAP]
+    # Look for specific aggregation function node types
+    aggs = []
+    aggs.extend(ast.find_all(exp.Count))
+    aggs.extend(ast.find_all(exp.Sum))
+    aggs.extend(ast.find_all(exp.Max))
+    aggs.extend(ast.find_all(exp.Min))
+    aggs.extend(ast.find_all(exp.Avg))
+
+    # Also check for generic functions that might be aggregations
+    for f in ast.find_all(exp.Func):
+        if hasattr(f, "name") and f.name and f.name.lower() in _AGG_SWAP:
+            aggs.append(f)
+
+    # print(f"Found aggregation functions: {[type(agg).__name__ for agg in aggs]}")
+
     f = _rc(aggs)
     if f:
-        f.set("name", _AGG_SWAP[f.name.lower()])
-        return True
+        # Determine current function name and swap it
+        if isinstance(f, exp.Count):
+            new_name = _AGG_SWAP["count"]
+        elif isinstance(f, exp.Sum):
+            new_name = _AGG_SWAP["sum"]
+        elif isinstance(f, exp.Max):
+            new_name = _AGG_SWAP["max"]
+        elif isinstance(f, exp.Min):
+            new_name = _AGG_SWAP["min"]
+        elif isinstance(f, exp.Avg):
+            new_name = _AGG_SWAP["avg"]
+        elif hasattr(f, "name") and f.name:
+            new_name = _AGG_SWAP.get(f.name.lower())
+        else:
+            return False
+
+        if new_name:
+            # Replace the aggregation function with the new one
+            if new_name == "count":
+                new_func = exp.Count(this=f.this, distinct=getattr(f, "distinct", None))
+            elif new_name == "sum":
+                new_func = exp.Sum(this=f.this, distinct=getattr(f, "distinct", None))
+            elif new_name == "max":
+                new_func = exp.Max(this=f.this)
+            elif new_name == "min":
+                new_func = exp.Min(this=f.this)
+            elif new_name == "avg":
+                new_func = exp.Avg(this=f.this, distinct=getattr(f, "distinct", None))
+            else:
+                return False
+
+            f.replace(new_func)
+            return True
     return False
 
 
@@ -235,9 +278,9 @@ def add_star_wildcard(ast: SqlAst) -> bool:
     return True
 
 
-def condition_flip(ast: SqlAst) -> bool:
+def where_condition_flip(ast: SqlAst) -> bool:
     """
-    Flip comparison operators to their logical opposites.
+    Flip comparison operators in WHERE clauses to their logical opposites.
     This fundamentally changes the meaning of conditions:
     - = becomes != (equal becomes not equal)
     - > becomes < (greater becomes less)
@@ -253,7 +296,44 @@ def condition_flip(ast: SqlAst) -> bool:
         exp.LTE: exp.GTE,
     }
 
-    comparisons = [node for node in ast.find_all(*flip_map.keys())]
+    # Only look for comparisons in WHERE clause
+    where_clause = ast.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*flip_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = flip_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
+        return True
+    return False
+
+
+def having_condition_flip(ast: SqlAst) -> bool:
+    """
+    Flip comparison operators in HAVING clauses to their logical opposites.
+    This fundamentally changes the meaning of aggregate conditions:
+    - = becomes != (equal becomes not equal)
+    - > becomes < (greater becomes less)
+    - >= becomes <= (greater-or-equal becomes less-or-equal)
+    This targets aggregate filtering conditions specifically.
+    """
+    flip_map = {
+        exp.EQ: exp.NEQ,
+        exp.NEQ: exp.EQ,
+        exp.GT: exp.LT,
+        exp.LT: exp.GT,
+        exp.GTE: exp.LTE,
+        exp.LTE: exp.GTE,
+    }
+
+    # Only look for comparisons in HAVING clause
+    having_clause = ast.args.get("having")
+    if not having_clause:
+        return False
+
+    comparisons = [node for node in having_clause.find_all(*flip_map.keys())]
     comp = _rc(comparisons)
     if comp:
         new_type = flip_map[type(comp)]
@@ -356,7 +436,8 @@ OPERATORS: Dict[str, callable] = {
     "join_break": join_break,
     "aggregation_swap": aggregation_swap,
     "add_star_wildcard": add_star_wildcard,
-    "condition_flip": condition_flip,
+    "where_condition_flip": where_condition_flip,
+    "having_condition_flip": having_condition_flip,
     "join_type_change": join_type_change,
     "distinct_toggle": distinct_toggle,
     "limit_increase": limit_increase,
@@ -369,13 +450,14 @@ OP_NAMES = tuple(OPERATORS.keys())
 # 2.  Define operator conflicts (operators that shouldn't be used together)
 # ────────────────────────────────────────────────────────────────────────
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
-    "projection_drop": {"projection_drop", "add_star_wildcard"},
-    "add_star_wildcard": {"add_star_wildcard", "projection_drop"},
+    "projection_drop": {"projection_drop"},
+    "add_star_wildcard": {"add_star_wildcard"},
     "predicate_delete": {"predicate_delete"},
-    "join_break": {"join_break", "join_type_change"},
-    "join_type_change": {"join_type_change", "join_break"},
+    "join_break": {"join_break"},
+    "join_type_change": {"join_type_change"},
     "aggregation_swap": {"aggregation_swap"},
-    "condition_flip": {"condition_flip"},
+    "where_condition_flip": {"where_condition_flip"},
+    "having_condition_flip": {"having_condition_flip"},
     "distinct_toggle": {"distinct_toggle"},
     "limit_increase": {"limit_increase"},
     "having_remove": {"having_remove"},
