@@ -4,84 +4,94 @@ Experiment 1 – Step 2 (parallel evaluation with multiple techniques)
 
 Goal
 ────
-• Loads mutants.json produced in Step 1.
+• Loads mutants_error_patterns.json produced in Step 1
 • Evaluates each mutant using multiple evaluation techniques in parallel
-• Each technique produces its own separate results file
+• Each technique produces its own separate results file with quality filtering
 • Extracts metrics EX / EXP / EXR / F1 and latency from Evaluation's return value
 
 Process
 ───────
-1. Load mutants from Step 1
-2. Apply smart sampling (by complete question_id groups) and quality filtering
+1. Load mutants from mutants_error_patterns.json
+2. Apply smart sampling by specific error patterns and complete question_id groups
 3. For each evaluation technique:
-   - Create a separate evaluation run with technique-specific logging
-   - Use adaptive worker count (1 for API-heavy techniques, more for others)
-   - Use ThreadPoolExecutor with subprocess isolation (≤ 30s per query)
+   - Create evaluation run with adaptive worker count (1 for API-heavy techniques, more for others)
+   - Use ThreadPoolExecutor with subprocess isolation (≤ 60s per query)
+   - Apply quality filtering to remove problematic questions with EX=1
    - Generate technique-specific output file
-4. Each mutant is evaluated inside its own short-lived subprocess with timeout
-5. Results are saved as separate JSON files per technique
+4. Each mutant is evaluated inside its own short-lived subprocess with SIGALRM timeout
+5. Results are saved as separate JSON files per technique in the scores/ex3 directory
 
 Sampling Strategy
 ─────────────────
-• When SAMPLE_SIZE is set, we sample complete question_id groups (not individual mutants)
+• SPECIFIC_PATTERNS: Filter to only include mutants with specified error patterns
+• SAMPLE_SIZE: When set, sample complete question_id groups (not individual mutants)
 • This ensures all depth levels (1, 2, 3) for each original query are included together
-• With SPECIFIC_PATTERNS set, we first filter to only include those specific error patterns
-• Then sample SAMPLE_SIZE questions from each pattern group
+• From each pattern group, sample up to SAMPLE_SIZE question groups for diversity
 • Quality filtering removes question_id groups where any mutant achieves EX=1
   (suggests problematic queries where errors don't affect results)
 
 Worker Management
 ─────────────────
-• API-heavy techniques (with embedding calls) use 1 worker to avoid rate limits
-• Non-API techniques can use multiple workers for faster processing
-• FORCE_SEQUENTIAL mode available to run everything with 1 worker
+• API-heavy techniques (SEMANTIC_COLUMN_AND_EXACT_CELL, UNIFIED_COLUMN_AND_SEMANTIC_ROW)
+  use 1 worker to avoid rate limits and API quota exhaustion
+• Non-API techniques use min(4, max(1, cpu_count // 2)) workers for faster processing
+• FORCE_SEQUENTIAL mode forces all techniques to use 1 worker
 
 Logging
 ───────
-• Each evaluation technique gets its own log directory (logs_{technique_name})
+• All evaluation techniques share a single log directory (logs/ under output directory)
+• LOG flag controls whether detailed evaluation logging is enabled
 • Logs are saved alongside the mutant scores files for easy organization
-• LOG flag can be toggled to enable/disable detailed evaluation logging
 
 Performance
 ───────────
 • Uses ThreadPoolExecutor with adaptive worker count per technique
-• Each query evaluation is isolated in subprocess with SIGALRM timeout
-• Guaranteed ≤ 30 seconds per individual query evaluation
+• Each query evaluation is isolated in subprocess with SIGALRM timeout (60s default)
+• Multiprocessing uses 'fork' method for macOS/Jupyter compatibility
 
 Output Files
 ────────────
 • mutant_scores_exact_column_and_exact_cell.json
-• mutant_scores_unified_column_and_semantic_row.json
-• logs_exact_column_and_exact_cell/ (if LOG=True)
-• logs_unified_column_and_semantic_row/ (if LOG=True)
-• (Additional files based on EVALUATION_TECHNIQUES list)
+• mutant_scores_semantic_column_and_exact_cell.json (if enabled)
+• mutant_scores_unified_column_and_semantic_row.json (if enabled)
+• logs/ (shared directory for all techniques if LOG=True)
 
 Configuration
 ─────────────
-Edit SAMPLE_SIZE to a small integer for smoke-testing, or set it to
-None to score the entire dataset. Set LOG to True/False to control logging.
-Set FORCE_SEQUENTIAL to True to use 1 worker for all techniques.
-Set SPECIFIC_PATTERNS to define specific error patterns for evaluation.
+• SAMPLE_SIZE: Integer for testing subset, None to score entire dataset
+• SPECIFIC_PATTERNS: List of error patterns to evaluate (filters before sampling)
+• LOG: True/False to control detailed evaluation logging
+• FORCE_SEQUENTIAL: True to use 1 worker for all techniques
+• PER_QUERY_TIMEOUT: Timeout in seconds for individual query evaluation (default 60s)
+• EVALUATION_TECHNIQUES: List of EvaluationTechnique enums to compare
+• EMBEDDING_MODEL: OpenAI embedding model for semantic evaluation techniques
+
+Quality Filtering
+─────────────────
+After evaluation, removes entire question groups where any mutant achieves EX=1,
+as this suggests the query generates results unaffected by introduced errors
+(e.g., null tables or trivial queries).
 """
 
 from __future__ import annotations
-import json
+
 import copy
+import json
+import multiprocessing as mp
 import os
+import random
 import signal
 import time
-import random
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict
-from collections import defaultdict
 
-import multiprocessing as mp
 from tqdm import tqdm
 
-from src.evaluation import Evaluation, EvaluationTechnique
 from src.core.database.database_handler import DBMS
 from src.core.model_manager import OpenAIModel
+from src.evaluation import Evaluation, EvaluationTechnique
 
 # ──────────────────────────────────────────────────────────────────────────
 # 0.  Paths, constants, and evaluation techniques
@@ -92,7 +102,7 @@ MUTANTS_JSON = (
     ROOT
     / "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
 )
-OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity/results/ex1"
+OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex3"
 
 LOGS_DIR = OUT_DIR / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,8 +110,8 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # Multiple evaluation techniques to compare mutation impact across different metrics
 EVALUATION_TECHNIQUES = [
     EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
-    EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-    EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+    # EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+    # EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
 ]
 
 # Embedding model configuration for semantic evaluation techniques
@@ -114,10 +124,12 @@ SAMPLE_SIZE = (
 
 # List of specific error patterns to evaluate
 SPECIFIC_PATTERNS = [
-    "having_remove → limit_modify → distinct_toggle",
-    "add_star_wildcard → distinct_toggle → limit_modify",
-    "predicate_delete → projection_drop → condition_flip",
-]  # Add your specific patterns here
+    "projection_drop → add_star_wildcard → distinct_toggle",
+    "predicate_delete → limit_increase → where_condition_flip",
+    "join_break → join_type_change → predicate_delete",
+    "aggregation_swap → having_remove → having_condition_flip",
+    "projection_drop → join_break → aggregation_swap",
+]
 
 PER_QUERY_TIMEOUT = 60  # wall-clock seconds per individual query evaluation
 LOG = True  # Enable/disable detailed evaluation logging per technique
@@ -265,6 +277,10 @@ def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[D
         for question_id in sampled_question_ids:
             sampled_mutants.extend(question_groups[question_id])
 
+        print(
+            f"  → Pattern '{pattern}': {len([m for m in sampled_mutants if m.get('error_pattern') == pattern])} mutants from {len(sampled_question_ids)} questions"
+        )
+
     print(
         f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions"
     )
@@ -308,6 +324,13 @@ def filter_problematic_questions(mutants: List[Dict]) -> List[Dict]:
             f"  → Quality filter: Removed {len(problematic_questions)} problematic questions "
             f"({removed_count} mutants) with EX=1"
         )
+
+        # Show which patterns remain after filtering
+        remaining_patterns = set(
+            m.get("error_pattern") for m in filtered_mutants if m.get("error_pattern")
+        )
+        print(f"  → Remaining patterns: {sorted(remaining_patterns)}")
+
         print(
             f"  → Remaining: {len(filtered_mutants)} mutants across "
             f"{len(set(m['question_id'] for m in filtered_mutants))} questions"
@@ -560,11 +583,20 @@ def main():
     # Apply smart sampling by specific patterns and question groups
     sampled_mutants = smart_sample_mutants(all_mutants, SAMPLE_SIZE)
 
+    # Show pattern distribution before evaluation
+    pattern_counts = defaultdict(int)
+    for mutant in sampled_mutants:
+        pattern_counts[mutant.get("error_pattern", "unknown")] += 1
+
+    print("\nPattern distribution in sampled mutants:")
+    for pattern, count in sorted(pattern_counts.items()):
+        print(f"  → {pattern}: {count} mutants")
+
     # Set multiprocessing method for subprocess safety
     mp.set_start_method("fork", force=True)  # safe for macOS / Jupyter
 
     # Display configuration
-    print("Configuration:")
+    print("\nConfiguration:")
     print(f"  Embedding model: {EMBEDDING_MODEL.value}")
     print(f"  Per-query timeout: {PER_QUERY_TIMEOUT}s")
     print(f"  Logging enabled: {LOG}")
@@ -593,6 +625,15 @@ def main():
 
         # Run evaluation for this technique (includes quality filtering)
         scored_mutants = evaluate_with_technique(sampled_mutants, technique)
+
+        # Show pattern distribution after evaluation and filtering
+        final_pattern_counts = defaultdict(int)
+        for mutant in scored_mutants:
+            final_pattern_counts[mutant.get("error_pattern", "unknown")] += 1
+
+        print("  → Final pattern distribution:")
+        for pattern, count in sorted(final_pattern_counts.items()):
+            print(f"    • {pattern}: {count} mutants")
 
         # Save technique-specific results
         out_file = OUT_DIR / f"mutant_scores_{technique_name}.json"
