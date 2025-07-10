@@ -124,12 +124,17 @@ class Evaluation:
 if __name__ == "__main__":
     # Example usage
     predicted_sql = """
-    SELECT COUNT(T1.id) FROM superhero AS T1 INNER JOIN hero_power AS T2 ON T1.id = T2.hero_id INNER JOIN superpower AS T3 ON T2.power_id = T3.id INNER JOIN colour AS T4 ON T1.eye_colour_id = T4.id WHERE T3.power_name = 'Agility' AND T4.colour = 'Blue'
+    SELECT DISTINCT T1.bond_type 
+    FROM bond AS T1 
+    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 
+    WHERE T3.element <> 'cl'
     """
 
     ground_truth_sql = """
-    SELECT COUNT(DISTINCT T1.id) FROM superhero AS T1 INNER JOIN colour AS T2 ON T1.eye_colour_id = T2.id INNER JOIN hero_power AS T3 ON T1.id = T3.hero_id INNER JOIN superpower AS T4 ON T3.power_id = T4.id WHERE T2.colour = 'Blue' AND T4.power_name = 'Agility'
-
+    SELECT DISTINCT T1.bond_type 
+    FROM bond AS T1 
+    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 ON T2.atom_id = T3.atom_id 
+    WHERE T3.element = 'cl'
     """
 
     # Single config dictionary that works for all techniques
@@ -137,7 +142,7 @@ if __name__ == "__main__":
         "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
         "db_params": {
             "dbms": DBMS.SQLITE,
-            "db_path": "data/benchmarks/Bird/bird_databases/superhero/superhero.sqlite",
+            "db_path": "data/benchmarks/Bird/dev_databases/toxicology/toxicology.sqlite",
         },
         "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
         "logs_dir_path": "data/evaluation_outputs/",
