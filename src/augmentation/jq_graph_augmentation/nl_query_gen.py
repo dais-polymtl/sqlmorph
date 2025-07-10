@@ -4,11 +4,14 @@ from src.core.model_manager.model_manager import ModelManager, ModelProvider, Mo
 from src.core.prompt_renderer.prompt_renderer import PromptRenderer
 from src.core.model_manager.openai_model import OpenAIModel
 
+from src.core.logger.logger import Logger
+
 from dotenv import load_dotenv
 import os
 import json
 
 load_dotenv()
+logger = Logger(__name__)
 
 
 def _generate_response(prompt_key, prompt_args, response_prefix):
@@ -92,13 +95,24 @@ def generate_new_extended_question(
 
 
 def gen_nl(filtered_aug, graph_first=False):
+    logger.log(
+        "info",
+        "Generating questions for augmented queries",
+        {"db_id": filtered_aug["db_id"]},
+    )
+
     data_folder = os.getenv("DATA_FOLDER")
     benchmark_path = os.path.join(data_folder, "benchmarks", "Bird")
     with open(os.path.join(benchmark_path, "bird_dev.json"), "r") as f:
         benchmark_data = json.load(f)
 
     benchmark_dict = {entry["question_id"]: entry for entry in benchmark_data}
-    for query in filtered_aug["queries"]:
+    for i, query in enumerate(filtered_aug["queries"]):
+        logger.log(
+            "debug",
+            f"[Query {i+1}/{len(filtered_aug['queries'])}] query_first",
+            {"id": query["id"], "mode": "query_first"},
+        )
         match = benchmark_dict.get(query["ext_id"])
         if match:
             new_extended_question = generate_new_extended_question(
@@ -111,7 +125,12 @@ def gen_nl(filtered_aug, graph_first=False):
         query["question"] = new_extended_question
 
     if graph_first:
-        for query in filtered_aug["graph_first"]:
+        for i, query in enumerate(filtered_aug["graph_first"]):
+            logger.log(
+                "debug",
+                f"[Query {i+1}/{len(filtered_aug['graph_first'])}] graph_first",
+                {"id": query["id"], "mode": "graph_first"},
+            )
             explicit_question = generate_explicit_question(
                 main_query=query["SQL"],
                 db_id=filtered_aug["db_id"],

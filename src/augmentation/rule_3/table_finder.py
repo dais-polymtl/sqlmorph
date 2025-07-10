@@ -5,13 +5,13 @@ from pathlib import Path
 import networkx as nx
 
 
-def find_central_table_and_components(subgraph, schema):
+def find_central_table_and_components(jqg, schema):
     """Find the central table in a subgraph and extract its components."""
-    if subgraph.number_of_nodes() < 3:
+    if jqg.number_of_nodes() < 3:
         return "", []
 
     # Compute betweenness centrality
-    betweenness_centrality = nx.betweenness_centrality(subgraph)
+    betweenness_centrality = nx.betweenness_centrality(jqg)
     max_betweenness = max(betweenness_centrality.values(), default=0)
 
     # Get candidate tables
@@ -24,12 +24,25 @@ def find_central_table_and_components(subgraph, schema):
     if not candidates:
         return "", []
 
+    schema_lookup = {node.lower(): node for node in schema.nodes()}
+
+    mapped_candidates = [
+        schema_lookup[node[0].lower()]
+        for node in candidates
+        if node[0].lower() in schema_lookup
+    ]
+
+    if not mapped_candidates:
+        return "", []
+
     # Resolve ties using schema centrality
-    if len(candidates) > 1:
+    if len(mapped_candidates) > 1:
         schema_centrality = nx.degree_centrality(schema)
-        central_table = max(candidates, key=lambda node: schema_centrality.get(node, 0))
+        central_table = max(
+            mapped_candidates, key=lambda node: schema_centrality.get(node, 0)
+        )
     else:
-        central_table = candidates[0]
+        central_table = mapped_candidates[0]
 
     # Extract components from table name
     components = re.findall(
@@ -40,40 +53,32 @@ def find_central_table_and_components(subgraph, schema):
     return central_table, components
 
 
-def process_subgraphs(subgraphs, schema):
+def retrieve_linker_table(jqg, schema):
     """Find central tables, extract components, and filter equivalent queries."""
-    kept_subgraphs = []
+    jqg_copy = jqg.copy()
+    central_table, components = find_central_table_and_components(
+        jqg["jq_graph"], schema
+    )
+    if not central_table:
+        return None
 
-    for subgraph in subgraphs:
-        nx_subgraph = subgraph.get("subgraph")
-        if not nx_subgraph:
-            continue
-
-        central_table, components = find_central_table_and_components(
-            nx_subgraph, schema
-        )
-        if not central_table:
-            continue
-
+    else:
         # Assign central table and components
-        subgraph["central_table"] = central_table
-        subgraph["components"] = components
-        subgraph["equivalent_queries"] = [
-            query
-            for query in subgraph["equivalent_queries"]
-            if any(comp in query["question"].lower() for comp in components)
-        ]
-        if subgraph["equivalent_queries"]:  # Only keep if queries remain
-            kept_subgraphs.append(subgraph)
+        jqg_copy["central_table"] = central_table
+        jqg_copy["components"] = components
+        for comp in components:
+            if comp in jqg["question"].lower():
+                return jqg_copy
 
-    return kept_subgraphs
+    return None
 
 
-def process_dataset(dataset_subgraphs):
+def process_dataset(dataset_jqgs):
     """Process train/dev/test datasets by loading schemas and filtering subgraphs."""
-    processed_subgraphs = {}
+    dataset_jqgs_w_lt = []
 
-    for db_id, subgraphs in dataset_subgraphs.items():
+    for jqg in dataset_jqgs:
+        db_id = jqg["db_id"]
         schema_path = Path(f"data/graph_data/bird_graphs/pickles/{db_id}_graph.pkl")
 
         if not schema_path.exists():
@@ -83,6 +88,8 @@ def process_dataset(dataset_subgraphs):
         with schema_path.open("rb") as f:
             schema = pickle.load(f)
 
-        processed_subgraphs[db_id] = process_subgraphs(subgraphs, schema)
+        new_jqg = retrieve_linker_table(jqg, schema)
+        if new_jqg is not None:
+            dataset_jqgs_w_lt.append(new_jqg)
 
-    return processed_subgraphs
+    return dataset_jqgs_w_lt

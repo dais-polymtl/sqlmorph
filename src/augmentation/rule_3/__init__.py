@@ -1,7 +1,7 @@
-from .data_processor import retrieve_all_dev_patterns, split_queries, filter_subgraphs
+from .data_processor import retrieve_all_dev_patterns, split_queries
 from .table_finder import (
     find_central_table_and_components,
-    process_subgraphs,
+    retrieve_linker_table,
     process_dataset,
 )
 from .hiding_techniques import (

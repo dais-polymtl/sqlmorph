@@ -130,30 +130,30 @@ def parse_queries(
             join_conditions_with_aliases, aliases_to_table_map
         )
 
-        seen_tables = set()
-        unique_tables = []
-        for table in tables:
-            table_name = table["table_name"]
-            if table_name not in seen_tables:
-                seen_tables.add(table_name)
-                unique_tables.append(
-                    {"table_name": table_name, "table_alias": table["table_alias"]}
-                )
+        # seen_tables = set()
+        # unique_tables = []
+        # for table in tables:
+        #     table_name = table["table_name"]
+        #     if table_name not in seen_tables:
+        #         seen_tables.add(table_name)
+        #         unique_tables.append(
+        #             {"table_name": table_name, "table_alias": table["table_alias"]}
+        #         )
 
-        seen_joins = set()
-        deduplicated_join_conditions = []
-        for condition in join_conditions_without_aliases:
-            left_side, right_side = map(str.strip, condition.split("="))
-            table1, column1 = map(str.strip, left_side.split("."))
-            table2, column2 = map(str.strip, right_side.split("."))
+        # seen_joins = set()
+        # deduplicated_join_conditions = []
+        # for condition in join_conditions_without_aliases:
+        #     left_side, right_side = map(str.strip, condition.split("="))
+        #     table1, column1 = map(str.strip, left_side.split("."))
+        #     table2, column2 = map(str.strip, right_side.split("."))
 
-            if table1 != table2:
-                join_pair = frozenset([(table1, column1), (table2, column2)])
-                if join_pair not in seen_joins:
-                    seen_joins.add(join_pair)
-                    deduplicated_join_conditions.append(
-                        f"{table1}.{column1} = {table2}.{column2}"
-                    )
+        #     if table1 != table2:
+        #         join_pair = frozenset([(table1, column1), (table2, column2)])
+        #         if join_pair not in seen_joins:
+        #             seen_joins.add(join_pair)
+        #             deduplicated_join_conditions.append(
+        #                 f"{table1}.{column1} = {table2}.{column2}"
+        #             )
 
         parsed_data = {
             "question_id": query.get("question_id", "") or f"query_{i}",
@@ -162,7 +162,7 @@ def parse_queries(
             "question": query.get("question", ""),
             "evidence": query.get("evidence", ""),
             "difficulty": query.get("difficulty", ""),
-            "tables": unique_tables,
+            "tables": tables,
             "jr_w_aliases": join_conditions_with_aliases,
             "jr_wo_aliases": join_conditions_without_aliases,
             "flattened_query": query.get("flattened_query", ""),
