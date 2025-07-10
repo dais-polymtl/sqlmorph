@@ -1,7 +1,7 @@
 import json
-from column import Column
-from table import Table
-from functional_dependencies import ForeignKey
+from .column import Column
+from .table import Table
+from .functional_dependencies import ForeignKey
 from collections import defaultdict
 import os
 import networkx as nx
@@ -211,26 +211,20 @@ class BIRD_Schema:
 
 
 def main():
-    with open("data/benchmarks/Bird/dev_tables.json", "r") as file:
-        data = json.load(file)
+    data_base_folder = os.getenv("DATA_FOLDER")
+    for dataset in ["dev", "train"]:
+        dataset_path = os.path.join(
+            data_base_folder, "benchmarks", "Bird", f"{dataset}_tables.json"
+        )
+        graph_folder_path = os.path.join(data_base_folder, "graph_data", "bird_graphs")
+        with open(dataset_path, "r") as file:
+            data = json.load(file)
 
-        for db_info in data:
-            database_name = db_info.get("db_id", "")
+            for db_info in data:
+                database_name = db_info.get("db_id", "")
+                schema = BIRD_Schema(database_name, dataset_path)
 
-            schema = BIRD_Schema(database_name, "data/benchmarks/Bird/dev_tables.json")
-            if database_name == "toxicology":
-                print(schema)
-    #         schema.save_graph_and_image("bird_graphs")
-
-    # with open("train_tables.json", "r") as file:
-    #     data = json.load(file)
-
-    #     for db_info in data:
-    #         database_name = db_info.get("db_id", "")
-    #         schema = BIRD_Schema(database_name, "train_tables.json")
-    #         print(schema)
-
-    #         schema.save_graph_and_image("bird_graphs")
+                schema.save_graph_and_image(graph_folder_path)
 
 
 if __name__ == "__main__":

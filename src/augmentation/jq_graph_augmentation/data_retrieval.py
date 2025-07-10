@@ -8,7 +8,7 @@ import re
 logger = Logger(__name__)
 
 
-def retrieve_all_dev_subgraphs(folder_path, n_tables):
+def retrieve_n_node_jqgs(folder_path, n_tables):
     """
     Retrieve all subgraphs from the pickle files in the folder.
 
@@ -49,6 +49,38 @@ def retrieve_all_dev_subgraphs(folder_path, n_tables):
         sys.exit(1)
 
     return join_patterns
+
+
+def retrieve_all_dev_jq_graphs(folder_path):
+    """
+    Retrieve and aggregate all subgraphs (join patterns) from each *_tables.pkl file in the given folder.
+
+    Args:
+        folder_path (str): The path to the folder containing the .pkl files.
+
+    Returns:
+        list: A list containing all join patterns from the matching files.
+    """
+    folder = Path(folder_path)
+    all_join_patterns = []
+
+    for file in folder.glob("jq_graphs_*_tables.pkl"):
+        try:
+            with open(file, "rb") as f:
+                join_patterns = pickle.load(f)
+                all_join_patterns.extend(join_patterns)
+        except (ValueError, KeyError, pickle.UnpicklingError) as e:
+            logger.log(
+                level="error",
+                action="Failed to load subgraphs from file.",
+                details={
+                    "file_name": file.name,
+                    "error": str(e),
+                },
+            )
+            sys.exit(1)
+
+    return all_join_patterns
 
 
 def load_schema(schema_path):

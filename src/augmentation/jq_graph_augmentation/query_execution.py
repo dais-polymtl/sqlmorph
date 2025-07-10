@@ -71,12 +71,6 @@ def execute_test_query_and_replace_placeholders(
 def add_values_to_translated_queries(pattern, db_path):
     test_query = pattern.get("test_query")
     main_query = pattern.get("main_query")
-    main_query = (
-        main_query.replace("order", '"order"') if "order" in main_query else main_query
-    )
-    test_query = (
-        test_query.replace("order", '"order"') if "order" in test_query else test_query
-    )
 
     filtering_columns = pattern.get("filtering_columns")
     final_query = execute_test_query_and_replace_placeholders(
@@ -117,7 +111,9 @@ def is_result_meaningful(results, query):
 
     # Normalize the query for keyword matching
     query_lower = query.lower()
-    is_aggregate_query = any(agg in query_lower for agg in ["count(", "avg(", "sum("])
+    is_aggregate_query = any(
+        agg in query_lower for agg in ["count(", "avg(", "sum(", "max(", "min("]
+    )
 
     # If it returns exactly one row and one column
     if len(results) == 1 and len(results[0]) == 1:
@@ -128,63 +124,44 @@ def is_result_meaningful(results, query):
     return True
 
 
-def execute_extended_queries(query_list, db_path):
+def execute_extended_queries(ext_jqg, db_path):
     """
-    Filters the given rule data to keep only valid queries.
+    Executes and validates an extended query, restoring formatting after evaluation.
 
     Parameters:
-    - query_list: List of dictionaries containing query information.
-    - adapter: An instance of the database adapter.
+    - ext_jqg: Dict containing query metadata (must include 'new_query').
+    - db_path: Path to the database.
 
     Returns:
-    - Tuple: (List of dictionaries with valid queries, boolean indicating if at least one was valid)
+    - Tuple: (Modified query dict, Bool indicating if query is valid and meaningful)
     """
-    valid_query_list = []
-    skip_query_1 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN badges AS extra_table ON extra_table.UserId = T2.OwnerUserId WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
-    skip_query_2 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T2.RelatedPostId WHERE T1.Title = 'What are principal component scores?'"
-    skip_query_3 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN badges AS extra_table ON extra_table.UserId = T1.OwnerUserId WHERE T1.Title = 'What are principal component scores?'"
-    skip_query_4 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T2.Id WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
-    skip_query_5 = "SELECT T3.Title, T2.LinkTypeId FROM posts AS T1 INNER JOIN postLinks AS T2 ON T1.Id = T2.PostId INNER JOIN posts AS T3 ON T2.RelatedPostId = T3.Id INNER JOIN comments AS extra_table ON extra_table.PostId = T1.Id WHERE T1.Title = 'What are principal component scores?'"
-    skip_query_6 = "SELECT T3.Title FROM postLinks AS T1 INNER JOIN posts AS T2 ON T1.PostId = T2.Id INNER JOIN posts AS T3 ON T1.RelatedPostId = T3.Id INNER JOIN postHistory AS extra_table ON extra_table.PostId = T1.RelatedPostId WHERE T2.Title = 'How to tell if something happened in a data set which monitors a value over time'"
-    for query in query_list:
-        if (
-            query.get("new_query", "") == skip_query_1
-            or query.get("new_query", "") == skip_query_2
-            or query.get("new_query", "") == skip_query_3
-            or query.get("new_query", "") == skip_query_4
-            or query.get("new_query", "") == skip_query_5
-            or query.get("new_query", "") == skip_query_6
-        ):
-            continue
+    ext_jqg_copy = ext_jqg.copy()
+    new_query = ext_jqg.get("new_query", "")
 
-        new_query = query.get("new_query", "")
+    # Temporarily replace known placeholders for compatibility
+    replacements = {
+        "STR_POSITION": "STRPOS",
+        "teamInfo.team_long_name": "ANY_VALUE(teamInfo.team_long_name)",
+    }
+    for original, replacement in replacements.items():
+        new_query = new_query.replace(original, replacement)
 
-        # Replace placeholders for compatibility
-        new_query = new_query.replace("STR_POSITION", "STRPOS")
-        new_query = new_query.replace(
-            "teamInfo.team_long_name", "ANY_VALUE(teamInfo.team_long_name)"
+    try:
+        query_results = execute_query(new_query, db_path)
+        results = (
+            query_results[1]
+            if isinstance(query_results, (list, tuple)) and len(query_results) > 1
+            else query_results
         )
+    except Exception:
+        return ext_jqg_copy, False
 
-        try:
-            query_results = execute_query(new_query, db_path)
-            results = (
-                query_results[1]
-                if isinstance(query_results, (list, tuple)) and len(query_results) > 1
-                else query_results
-            )
-        except Exception:
-            continue  # Skip to next query
+    if is_result_meaningful(results, new_query):
+        # Restore original placeholders
+        for original, replacement in replacements.items():
+            new_query = new_query.replace(replacement, original)
 
-        if is_result_meaningful(results, new_query):
-            # Restore placeholders back to original
-            new_query = new_query.replace("STRPOS", "STR_POSITION")
-            new_query = new_query.replace(
-                "ANY_VALUE(teamInfo.team_long_name)", "teamInfo.team_long_name"
-            )
+        ext_jqg_copy["new_query"] = new_query
+        return ext_jqg_copy, True
 
-            query["new_query"] = new_query
-            valid_query_list.append(query)
-            break  # You break after the first valid one, correct?
-
-    valid_query = len(valid_query_list) > 0
-    return valid_query_list, valid_query
+    return ext_jqg_copy, False

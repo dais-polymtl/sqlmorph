@@ -63,41 +63,33 @@ New Evidence: modified evidence (or empty string if none)
     return new_question, new_evidence
 
 
-def generate_synonym_replacement_queries(db_id, subgraphs):
+def generate_synonym_replacement_queries(jqgs):
     """Processes queries by applying synonym replacement and filtering unchanged ones."""
 
     rewritten_queries = []
-    print(f"Generating new questions for {db_id}...")
 
-    for subgraph in subgraphs:
-        for query in subgraph["equivalent_queries"]:
-            new_question, new_evidence = apply_synonym_replacement(
-                db_id,
-                query["question"],
-                query["evidence"],
-                query["SQL"],
-                subgraph["central_table"],
-                subgraph["components"],
+    for jqg in jqgs:
+        new_question, new_evidence = apply_synonym_replacement(
+            jqg["db_id"],
+            jqg["question"],
+            jqg["evidence"],
+            jqg["SQL"],
+            jqg["central_table"],
+            jqg["components"],
+        )
+
+        if not any(comp in new_question.lower() for comp in jqg["components"]):
+            jqg["new_question"], jqg["new_evidence"] = (
+                new_question,
+                new_evidence,
             )
-
-            # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph["components"]):
-                query["new_question"], query["new_evidence"] = (
-                    new_question,
-                    new_evidence,
-                )
-                rewritten_queries.append(query)
+            rewritten_queries.append(jqg)
 
     return rewritten_queries
 
 
 def hide_tables_with_synonym_replacement(data):
-    """Runs synonym replacement on the dataset and returns the modified queries."""
-
-    return {
-        db_id: generate_synonym_replacement_queries(db_id, subgraphs)
-        for db_id, subgraphs in data.items()
-    }
+    return generate_synonym_replacement_queries(data)
 
 
 def apply_backtranslation(
@@ -154,41 +146,33 @@ Evidence in English: [modified evidence] (or empty string if none)
     return new_question, new_evidence
 
 
-def generate_backtranslated_queries(db_id, subgraphs):
+def generate_backtranslated_queries(jqgs):
     """Processes queries by applying back translation and filtering unchanged ones."""
 
     rewritten_queries = []
-    print(f"Generating backtranslated questions for {db_id}...")
 
-    for subgraph in subgraphs:
-        for query in subgraph["equivalent_queries"]:
-            new_question, new_evidence = apply_backtranslation(
-                db_id,
-                query["question"],
-                query["evidence"],
-                query["SQL"],
-                subgraph["central_table"],
-                subgraph["components"],
+    for jqg in jqgs:
+        new_question, new_evidence = apply_backtranslation(
+            jqg["db_id"],
+            jqg["question"],
+            jqg["evidence"],
+            jqg["SQL"],
+            jqg["central_table"],
+            jqg["components"],
+        )
+        # Ensure replacement occurred before keeping it
+        if not any(comp in new_question.lower() for comp in jqg["components"]):
+            jqg["new_question"], jqg["new_evidence"] = (
+                new_question,
+                new_evidence,
             )
-
-            # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph["components"]):
-                query["new_question"], query["new_evidence"] = (
-                    new_question,
-                    new_evidence,
-                )
-                rewritten_queries.append(query)
+            rewritten_queries.append(jqg)
 
     return rewritten_queries
 
 
 def hide_tables_with_backtranslation(data):
-    """Runs back translation on the dataset, concealing table names."""
-
-    return {
-        db_id: generate_backtranslated_queries(db_id, subgraphs)
-        for db_id, subgraphs in data.items()
-    }
+    return generate_backtranslated_queries(data)
 
 
 def augment_with_contextual_synonyms(
@@ -244,38 +228,31 @@ New Evidence: [modified evidence] (or empty string if none)
     return new_question, new_evidence
 
 
-def generate_contextually_augmented_queries(db_id, subgraphs):
+def generate_contextually_augmented_queries(jqgs):
     """Processes queries by applying contextual augmentation and filtering unchanged ones."""
 
     rewritten_queries = []
-    print(f"Generating contextually augmented questions for {db_id}...")
 
-    for subgraph in subgraphs:
-        for query in subgraph["equivalent_queries"]:
-            new_question, new_evidence = augment_with_contextual_synonyms(
-                db_id,
-                query["question"],
-                query["evidence"],
-                query["SQL"],
-                subgraph["central_table"],
-                subgraph["components"],
+    for jqg in jqgs:
+        new_question, new_evidence = augment_with_contextual_synonyms(
+            jqg["db_id"],
+            jqg["question"],
+            jqg["evidence"],
+            jqg["SQL"],
+            jqg["central_table"],
+            jqg["components"],
+        )
+
+        # Ensure replacement occurred before keeping it
+        if not any(comp in new_question.lower() for comp in jqg["components"]):
+            jqg["new_question"], jqg["new_evidence"] = (
+                new_question,
+                new_evidence,
             )
-
-            # Ensure replacement occurred before keeping it
-            if not any(comp in new_question.lower() for comp in subgraph["components"]):
-                query["new_question"], query["new_evidence"] = (
-                    new_question,
-                    new_evidence,
-                )
-                rewritten_queries.append(query)
+            rewritten_queries.append(jqg)
 
     return rewritten_queries
 
 
 def hide_tables_with_contextual_augmentation(data):
-    """Runs contextual augmentation on the dataset to conceal table names."""
-
-    return {
-        db_id: generate_contextually_augmented_queries(db_id, subgraphs)
-        for db_id, subgraphs in data.items()
-    }
+    return generate_contextually_augmented_queries(data)

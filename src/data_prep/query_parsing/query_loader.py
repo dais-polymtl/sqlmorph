@@ -4,7 +4,7 @@ import os
 import json
 from pathlib import Path
 from sqlglot import parse_one
-from sqlglot.expressions import Subquery
+from sqlglot.expressions import Subquery, CTE
 
 
 logger = Logger(__name__)
@@ -57,7 +57,10 @@ def split_nested_flat_queries(queries):
     flat_queries = []
     for query in queries:
         sql_query = query.get("SQL", "") or query.get("sql", "")
-        if parse_one(sql_query, dialect="mysql").find(Subquery) is not None:
+        if (
+            parse_one(sql_query, dialect="mysql").find(Subquery) is not None
+            or parse_one(sql_query, dialect="mysql").find(CTE) is not None
+        ):
             nested_queries.append(query)
         else:
             flat_queries.append(query)

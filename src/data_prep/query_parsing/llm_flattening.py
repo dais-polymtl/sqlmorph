@@ -6,10 +6,11 @@ from src.core.model_manager.model_manager import ModelManager, ModelProvider, Mo
 from src.core.prompt_renderer.prompt_renderer import PromptRenderer
 from src.core.model_manager.openai_model import OpenAIModel
 from src.core.logger.logger import Logger
-from src.core.database.database_handler import DatabaseHandler, DBMS
+from src.core.database.database_handler import DBMS
+from src.evaluation import Evaluation, EvaluationTechnique
 
 from sqlglot import parse_one
-from sqlglot.expressions import Subquery
+from sqlglot.expressions import Subquery, CTE
 from pathlib import Path
 import os
 
@@ -78,26 +79,22 @@ def compare_queries(
     Returns:
         bool: True if queries return the same result, False otherwise.
     """
-    db_handler = DatabaseHandler(DBMS.SQLITE, {"db_path": str(db_path)})
-    db_handler.connect_to_database()
-
-    try:
-        _, nested_rows = db_handler.run_query(nested_query, return_cursor=False)
-        _, flattened_rows = db_handler.run_query(flattened_query, return_cursor=False)
-
-        return nested_rows == flattened_rows
-
-    except Exception as e:
-        logger.log(
-            level="error",
-            action="Failed to compare nested and flattened SQL queries.",
-            details={
-                "nested_query": nested_query,
-                "flattened_query": flattened_query,
-                "error": str(e),
-            },
-        )
-        return False
+    config = {
+        "evaluation_technique": EvaluationTechnique.EXECUTION_ACCURACY,
+        "db_params": {
+            "dbms": DBMS.SQLITE,
+            "db_path": str(db_path),
+        },
+        "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
+        "logs_dir_path": "data/evaluation_outputs/",
+    }
+    exact_evaluator = Evaluation(config)
+    res = exact_evaluator.run_evaluation(
+        predicted_sql=flattened_query,
+        ground_truth_sql=nested_query,
+        log=False,
+    )
+    return res["metrics"]["EX"] == 1.0
 
 
 def flatten_queries_automatically(
@@ -141,7 +138,10 @@ def flatten_queries_automatically(
         flattened = flatten_queries(sql)
 
         try:
-            is_flat = parse_one(flattened, dialect="mysql").find(Subquery) is None
+            is_flat = (
+                parse_one(flattened, dialect="mysql").find(Subquery) is None
+                and parse_one(flattened, dialect="mysql").find(CTE) is None
+            )
         except Exception as e:
             logger.log("warning", f"Failed to parse flattened query at index {i}: {e}")
             still_nested.append(query)

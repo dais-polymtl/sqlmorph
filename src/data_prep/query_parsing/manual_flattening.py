@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple
 
 from llm_flattening import compare_queries
 from sqlglot import parse_one
-from sqlglot.expressions import Subquery
+from sqlglot.expressions import Subquery, CTE
 
 import os
 import json
@@ -68,7 +68,9 @@ def flatten_queries_manually(
                 break
 
             try:
-                if parse_one(user_query, dialect="mysql").find(Subquery):
+                if parse_one(user_query, dialect="mysql").find(Subquery) and parse_one(
+                    user_query, dialect="mysql"
+                ).find(CTE):
                     print("❌ Your query still appears to be nested. Please try again.")
                     continue
             except Exception as e:
