@@ -9,36 +9,50 @@ with errors increasing by one new operator per depth. We systematically try
 all applicable operators at each depth level to ensure comprehensive coverage:
 
     depth 1 :  1 error
-    depth 2 :  1 + 1 new error
-    depth 3 :  1 + 1 new error + 1 more error
+    depth 2 :  1 + 1 new error (applied to depth 1 result)
+    depth 3 :  1 + 1 new error + 1 more error (applied to depth 2 result)
 → The goal is to track how adding more errors impacts EX/EXP/EXR.
 
 Algorithm Overview
 ──────────────────
-The mutation generation follows a depth-based exhaustive approach:
+The mutation generation follows a depth-based incremental approach:
 
 1. **Sequential Error Addition**: For each depth level (1, 2, 3), we build upon
    the previous level by adding exactly one more error. This creates a controlled
    progression where we can measure the cumulative impact of multiple errors.
 
+   IMPORTANT: Each new operator is applied to the SQL result from the previous
+   depth, not to the original gold SQL. This ensures proper incremental mutation
+   where operators work with the actual state of the SQL after previous mutations.
+
 2. **Exhaustive Operator Selection**: At each depth, we systematically try ALL
    available operators that:
-   - Can be successfully applied to the current SQL
+   - Can be successfully applied to the current SQL (from previous depth)
    - Don't conflict with previously applied operators
    - Actually modify the AST (verified by attempting application)
+   - Produce syntactically valid SQL
 
-3. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
-   projection_drop + add_star_wildcard). The algorithm detects and avoids
-   such conflicting combinations.
+3. **Incremental Building**: The mutation process follows this pattern:
+   - Depth 1: Apply operator A to original SQL → SQL₁
+   - Depth 2: Apply operator B to SQL₁ → SQL₂
+   - Depth 3: Apply operator C to SQL₂ → SQL₃
 
-4. **Validation**: Each mutation sequence is validated to ensure:
+   This ensures that operators like `where_condition_flip` at depth 3 work on
+   the correct SQL state (e.g., after `where_predicate_delete` has already
+   removed predicates at depth 2).
+
+4. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
+   each operator conflicts with itself to prevent duplicate application).
+   The algorithm detects and avoids such conflicting combinations.
+
+5. **Validation**: Each mutation sequence is validated to ensure:
    - All operators can be applied successfully
    - The final AST differs from the original
-   - The resulting SQL is syntactically valid
+   - The resulting SQL is syntactically valid and parseable
 
 Mutation Operators
 ──────────────────
-We implement 10 atomic mutation operators that target different SQL components:
+We implement 13 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
@@ -46,61 +60,69 @@ We implement 10 atomic mutation operators that target different SQL components:
 • `add_star_wildcard` — Adds * or alias.* to SELECT list
 
 **WHERE Clause Mutations:**
-• `predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
-• `condition_flip` — Flips comparison operators (=↔!=, >↔<, >=↔<=)
+• `where_predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
+• `where_condition_flip` — Flips comparison operators in WHERE clauses (=↔!=, >↔<, >=↔<=)
+• `where_remove` — Removes the WHERE clause completely
+
+**HAVING Clause Mutations:**
+• `having_predicate_delete` — Removes a random predicate from HAVING clause (requires >1 predicates)
+• `having_condition_flip` — Flips comparison operators in HAVING clauses (=↔!=, >↔<, >=↔<=)
+• `having_remove` — Removes the HAVING clause completely
 
 **JOIN Mutations:**
 • `join_break` — Removes the ON condition from a JOIN clause
 • `join_type_change` — Changes JOIN type (e.g., INNER to LEFT or LEFT to INNER)
 
-**Aggregation and Grouping Mutations:**
+**Aggregation Mutations:**
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
-• `having_remove` — Removes the HAVING clause completely
 
 **Result Limiting Mutations:**
 • `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
 
 Operator Conflicts
 ──────────────────
-Some operators are incompatible and shouldn't be applied together:
-• Each operator conflicts with itself to prevent duplicate application
-• projection_drop conflicts with add_star_wildcard
-• join_break conflicts with join_type_change
-• Other conflicts are defined in the OPERATOR_CONFLICTS dictionary
+Each operator conflicts with itself to prevent duplicate application within
+the same mutation sequence. This ensures that each operator type is applied
+at most once per sequence, maintaining meaningful and distinct mutations.
 
 The conflict detection system prevents selecting operators that would neutralize
-each other's effects, ensuring meaningful mutations at each depth level.
+each other's effects or create redundant mutations, ensuring each sequence
+produces a unique and meaningful variant.
 
 Correctness safeguards
 ──────────────────────
 1.  **Each operator returns a boolean**
     • True  → it modified the AST.
-    • False → it could not apply and the whole permutation is abandoned.
+    • False → it could not apply and the whole sequence is abandoned.
 
 2.  **Final structural equality check**
     Even if every operator claims "changed", a later operator might UNDO
-    the change (e.g., add * then drop it).
-    We compare the fully-mutated AST with the original AST using
-    `ast.equals(original_ast)`.
+    the change. We compare the fully-mutated AST with the original AST.
     If they are structurally identical, the sequence is discarded.
 
 3.  **Conflict detection**
-    Some operators conflict with each other (e.g., add_star_wildcard
-    vs projection_drop). We avoid selecting conflicting operators in the
-    same sequence.
+    Each operator conflicts with itself to prevent duplicate application.
+    We avoid selecting conflicting operators in the same sequence.
 
-4.  **add_star_wildcard** injects `alias.*` or bare `*`; we render
-    SQL with `dialect="sqlite"` so sqlglot does not rewrite divisions
-    into `NULLIF(x,0)`.
+4.  **SQL Rendering & Validation**
+    All SQL is rendered with `dialect="sqlite"` to ensure consistent
+    output formatting. Generated SQL is validated for parseability to
+    prevent malformed queries from being included in the mutation suite.
+
+5.  **Incremental Mutation State**
+    Each depth level builds upon the previous depth's SQL result, ensuring
+    that operators work with the correct intermediate state rather than
+    the original gold SQL.
 
 Output
 ──────
-`data/evaluation/metrics/experiment_1/mutants.json`
+`data/evaluation/experiments/controlled_error_sensitivity/mutants.json`
 with keys:
     question_id · db_id · depth · operators[] · mutated_sql · error_count · gold_sql
 """
 
 from __future__ import annotations
+
 import json
 import random
 from pathlib import Path
@@ -109,7 +131,7 @@ from typing import Dict, List, Tuple, Set
 from sqlglot import parse_one, exp
 
 # ────────────────────────────────────────────────────────────────────────
-# Config – adjust paths for your workspace
+# Config
 # ────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
@@ -119,9 +141,7 @@ OUT_FILE = OUT_DIR / "mutants.json"
 MAX_DEPTH = 3  # Set this value to the desired max depth
 
 
-# ────────────────────────────────────────────────────────────────────────
 # Load BIRD-dev once
-# ────────────────────────────────────────────────────────────────────────
 def load_json(path: Path) -> list:
     with path.open() as f:
         return json.load(f)
@@ -152,7 +172,7 @@ def projection_drop(ast: SqlAst) -> bool:
     return False
 
 
-def predicate_delete(ast: SqlAst) -> bool:
+def where_predicate_delete(ast: SqlAst) -> bool:
     """
     Remove a random predicate from the WHERE clause.
     Handles compound conditions (AND/OR) by flattening and reconstructing.
@@ -176,6 +196,33 @@ def predicate_delete(ast: SqlAst) -> bool:
     for p in preds[1:]:
         new_w = exp.and_(new_w, p)
     ast.set("where", exp.Where(this=new_w))
+    return True
+
+
+def having_predicate_delete(ast: SqlAst) -> bool:
+    """
+    Remove a random predicate from the HAVING clause.
+    Handles compound conditions (AND/OR) by flattening and reconstructing.
+    Requires at least 2 predicates to avoid removing the entire HAVING clause.
+    """
+    having = ast.args.get("having")
+    if not having:
+        return False
+
+    def flat(node):
+        if isinstance(node, (exp.And, exp.Or)):
+            return flat(node.left) + flat(node.right)
+        return [node]
+
+    preds = flat(having.this)
+    if len(preds) <= 1:
+        return False
+
+    preds.remove(_rc(preds))
+    new_h = preds[0]
+    for p in preds[1:]:
+        new_h = exp.and_(new_h, p)
+    ast.set("having", exp.Having(this=new_h))
     return True
 
 
@@ -203,11 +250,56 @@ def aggregation_swap(ast: SqlAst) -> bool:
     - MIN ↔ MAX (changes from smallest to largest)
     - COUNT → SUM (changes from count to sum, often meaningless)
     """
-    aggs = [f for f in ast.find_all(exp.Func) if f.name.lower() in _AGG_SWAP]
+    # Look for specific aggregation function node types
+    aggs = []
+    aggs.extend(ast.find_all(exp.Count))
+    aggs.extend(ast.find_all(exp.Sum))
+    aggs.extend(ast.find_all(exp.Max))
+    aggs.extend(ast.find_all(exp.Min))
+    aggs.extend(ast.find_all(exp.Avg))
+
+    # Also check for generic functions that might be aggregations
+    for f in ast.find_all(exp.Func):
+        if hasattr(f, "name") and f.name and f.name.lower() in _AGG_SWAP:
+            aggs.append(f)
+
+    # print(f"Found aggregation functions: {[type(agg).__name__ for agg in aggs]}")
+
     f = _rc(aggs)
     if f:
-        f.set("name", _AGG_SWAP[f.name.lower()])
-        return True
+        # Determine current function name and swap it
+        if isinstance(f, exp.Count):
+            new_name = _AGG_SWAP["count"]
+        elif isinstance(f, exp.Sum):
+            new_name = _AGG_SWAP["sum"]
+        elif isinstance(f, exp.Max):
+            new_name = _AGG_SWAP["max"]
+        elif isinstance(f, exp.Min):
+            new_name = _AGG_SWAP["min"]
+        elif isinstance(f, exp.Avg):
+            new_name = _AGG_SWAP["avg"]
+        elif hasattr(f, "name") and f.name:
+            new_name = _AGG_SWAP.get(f.name.lower())
+        else:
+            return False
+
+        if new_name:
+            # Replace the aggregation function with the new one
+            if new_name == "count":
+                new_func = exp.Count(this=f.this, distinct=getattr(f, "distinct", None))
+            elif new_name == "sum":
+                new_func = exp.Sum(this=f.this, distinct=getattr(f, "distinct", None))
+            elif new_name == "max":
+                new_func = exp.Max(this=f.this)
+            elif new_name == "min":
+                new_func = exp.Min(this=f.this)
+            elif new_name == "avg":
+                new_func = exp.Avg(this=f.this, distinct=getattr(f, "distinct", None))
+            else:
+                return False
+
+            f.replace(new_func)
+            return True
     return False
 
 
@@ -235,9 +327,9 @@ def add_star_wildcard(ast: SqlAst) -> bool:
     return True
 
 
-def condition_flip(ast: SqlAst) -> bool:
+def where_condition_flip(ast: SqlAst) -> bool:
     """
-    Flip comparison operators to their logical opposites.
+    Flip comparison operators in WHERE clauses to their logical opposites.
     This fundamentally changes the meaning of conditions:
     - = becomes != (equal becomes not equal)
     - > becomes < (greater becomes less)
@@ -253,7 +345,44 @@ def condition_flip(ast: SqlAst) -> bool:
         exp.LTE: exp.GTE,
     }
 
-    comparisons = [node for node in ast.find_all(*flip_map.keys())]
+    # Only look for comparisons in WHERE clause
+    where_clause = ast.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*flip_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = flip_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
+        return True
+    return False
+
+
+def having_condition_flip(ast: SqlAst) -> bool:
+    """
+    Flip comparison operators in HAVING clauses to their logical opposites.
+    This fundamentally changes the meaning of aggregate conditions:
+    - = becomes != (equal becomes not equal)
+    - > becomes < (greater becomes less)
+    - >= becomes <= (greater-or-equal becomes less-or-equal)
+    This targets aggregate filtering conditions specifically.
+    """
+    flip_map = {
+        exp.EQ: exp.NEQ,
+        exp.NEQ: exp.EQ,
+        exp.GT: exp.LT,
+        exp.LT: exp.GT,
+        exp.GTE: exp.LTE,
+        exp.LTE: exp.GTE,
+    }
+
+    # Only look for comparisons in HAVING clause
+    having_clause = ast.args.get("having")
+    if not having_clause:
+        return False
+
+    comparisons = [node for node in having_clause.find_all(*flip_map.keys())]
     comp = _rc(comparisons)
     if comp:
         new_type = flip_map[type(comp)]
@@ -272,19 +401,29 @@ def join_type_change(ast: SqlAst) -> bool:
     if not j:
         return False
 
-    # Define possible join type swaps
-    join_types = {
-        "": "LEFT",  # Default INNER JOIN -> LEFT JOIN
-        "LEFT": "",  # LEFT JOIN -> INNER JOIN
-        "RIGHT": "",  # RIGHT JOIN -> INNER JOIN
-        "FULL": "LEFT",  # FULL JOIN -> LEFT JOIN
-        "INNER": "LEFT",  # INNER JOIN -> LEFT JOIN
-    }
+    # Get current join type more carefully
+    current_type = j.args.get("kind")
 
-    current_type = j.args.get("kind", "")
-    if current_type in join_types:
-        j.set("kind", join_types[current_type])
+    # Handle different join type representations
+    if current_type is None:
+        # No explicit type means INNER JOIN (default)
+        j.set("kind", "LEFT")
         return True
+    elif isinstance(current_type, str):
+        if current_type == "LEFT":
+            j.set("kind", None)  # Change to INNER (no explicit type)
+            return True
+        elif current_type == "RIGHT":
+            j.set("kind", "LEFT")
+            return True
+        elif current_type == "INNER":
+            j.set("kind", "LEFT")
+            return True
+        elif current_type == "FULL":
+            j.set("kind", "LEFT")
+            return True
+
+    # If we get here, we couldn't determine how to change the join type
     return False
 
 
@@ -349,14 +488,28 @@ def having_remove(ast: SqlAst) -> bool:
     return False
 
 
+def where_remove(ast: SqlAst) -> bool:
+    """
+    Remove the WHERE clause completely.
+    This breaks filtering on regular columns and often returns more rows.
+    """
+    if ast.args.get("where"):
+        ast.set("where", None)
+        return True
+    return False
+
+
 # Registry of all available mutation operators
 OPERATORS: Dict[str, callable] = {
     "projection_drop": projection_drop,
-    "predicate_delete": predicate_delete,
+    "where_predicate_delete": where_predicate_delete,
+    "where_remove": where_remove,
+    "having_predicate_delete": having_predicate_delete,
     "join_break": join_break,
     "aggregation_swap": aggregation_swap,
     "add_star_wildcard": add_star_wildcard,
-    "condition_flip": condition_flip,
+    "where_condition_flip": where_condition_flip,
+    "having_condition_flip": having_condition_flip,
     "join_type_change": join_type_change,
     "distinct_toggle": distinct_toggle,
     "limit_increase": limit_increase,
@@ -369,13 +522,16 @@ OP_NAMES = tuple(OPERATORS.keys())
 # 2.  Define operator conflicts (operators that shouldn't be used together)
 # ────────────────────────────────────────────────────────────────────────
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
-    "projection_drop": {"projection_drop", "add_star_wildcard"},
-    "add_star_wildcard": {"add_star_wildcard", "projection_drop"},
-    "predicate_delete": {"predicate_delete"},
-    "join_break": {"join_break", "join_type_change"},
-    "join_type_change": {"join_type_change", "join_break"},
+    "projection_drop": {"projection_drop"},
+    "add_star_wildcard": {"add_star_wildcard"},
+    "where_predicate_delete": {"where_predicate_delete"},
+    "where_remove": {"where_remove"},
+    "having_predicate_delete": {"having_predicate_delete"},
+    "join_break": {"join_break"},
+    "join_type_change": {"join_type_change"},
     "aggregation_swap": {"aggregation_swap"},
-    "condition_flip": {"condition_flip"},
+    "where_condition_flip": {"where_condition_flip"},
+    "having_condition_flip": {"having_condition_flip"},
     "distinct_toggle": {"distinct_toggle"},
     "limit_increase": {"limit_increase"},
     "having_remove": {"having_remove"},
@@ -415,6 +571,61 @@ def apply_sequence(sql: str, seq: Tuple[str, ...]) -> str | None:
     return ast.sql(dialect="sqlite")
 
 
+def apply_sequence_incremental(
+    sql: str, seq: Tuple[str, ...]
+) -> Tuple[str, List[str]] | None:
+    """
+    Apply operators incrementally, returning intermediate results.
+    Returns (final_sql, intermediate_sqls) or None if any operator fails.
+    intermediate_sqls[i] contains SQL after applying seq[0:i+1] operators.
+    """
+    original_ast = parse_one(sql, read="sqlite")
+    ast = original_ast.copy()
+    intermediate_sqls = []
+
+    for op in seq:
+        if not OPERATORS[op](ast):  # operator had no effect
+            return None
+        intermediate_sqls.append(ast.sql(dialect="sqlite"))
+
+    if ast == original_ast:  # nothing changed overall
+        return None
+
+    return ast.sql(dialect="sqlite"), intermediate_sqls
+
+
+def apply_single_operator(sql: str, op: str) -> str | None:
+    """
+    Apply a single operator to SQL.
+    Returns mutated SQL or None if operator cannot be applied.
+    """
+    try:
+        original_ast = parse_one(sql, read="sqlite")
+        ast = original_ast.copy()
+
+        if not OPERATORS[op](ast):
+            return None
+
+        if ast == original_ast:
+            return None
+
+        # Try to render the SQL and validate it's parseable
+        result_sql = ast.sql(dialect="sqlite")
+
+        # Validate the generated SQL is parseable
+        try:
+            parse_one(result_sql, read="sqlite")
+        except Exception:
+            # If the generated SQL is not parseable, reject this mutation
+            return None
+
+        return result_sql
+
+    except Exception:
+        # If original SQL can't be parsed or any other error occurs
+        return None
+
+
 # ────────────────────────────────────────────────────────────────────────
 # 4.  Generate mutants with sequential error addition (depth-based)
 # ────────────────────────────────────────────────────────────────────────
@@ -430,12 +641,11 @@ def generate_mutation_suite(
        adding operators:
        - For each subsequent depth (2, 3), try adding EVERY other operator that:
          * Doesn't conflict with already selected operators
-         * Successfully applies to the current SQL
+         * Successfully applies to the PREVIOUS depth's SQL result
     3. Save all valid mutation sequences that reach the target depths
 
-    This exhaustive approach ensures we explore all possible valid combinations
-    of operators at each depth level, following the sequential rule where each
-    depth builds upon the previous with exactly one additional operator.
+    This approach ensures proper incremental mutation where each operator
+    builds upon the previous mutations' effects.
 
     Args:
         seed: Random seed for reproducible results (used in operator internals)
@@ -450,12 +660,13 @@ def generate_mutation_suite(
         sql, qid, db = item["SQL"], item["question_id"], item["db_id"]
 
         # Try EVERY operator as a starting point (depth=1)
-        valid_starting_sequences = []
+        valid_sequences_with_sql = []  # Store (operators_list, current_sql)
+
         for first_op in OPERATORS.keys():
-            if apply_sequence(sql, (first_op,)):
-                valid_starting_sequences.append([first_op])
+            mutated_sql = apply_single_operator(sql, first_op)
+            if mutated_sql:
+                valid_sequences_with_sql.append(([first_op], mutated_sql))
                 # Add as depth 1 mutant
-                mutated_sql = apply_sequence(sql, (first_op,))
                 mutants.append(
                     {
                         "question_id": qid,
@@ -469,23 +680,23 @@ def generate_mutation_suite(
                 )
 
         # For depth 2 and 3, build upon each valid sequence from previous depth
-        current_sequences = valid_starting_sequences.copy()
+        current_sequences = valid_sequences_with_sql.copy()
 
         for depth in range(2, MAX_DEPTH + 1):
             next_sequences = []
-            for sequence in current_sequences:
-                # Try adding EVERY possible next operator
+            for sequence, current_sql in current_sequences:
+                # Try adding EVERY possible next operator to the CURRENT SQL
                 for next_op in OPERATORS.keys():
                     # Skip if operator conflicts with already selected ones
                     if has_conflict(next_op, sequence):
                         continue
 
-                    # Try applying the extended sequence
-                    new_sequence = sequence + [next_op]
-                    mutated_sql = apply_sequence(sql, tuple(new_sequence))
+                    # Apply next operator to the current SQL (not original!)
+                    new_sql = apply_single_operator(current_sql, next_op)
 
-                    if mutated_sql:  # If successfully applied
-                        next_sequences.append(new_sequence)
+                    if new_sql:  # If successfully applied
+                        new_sequence = sequence + [next_op]
+                        next_sequences.append((new_sequence, new_sql))
                         # Add as a valid mutant for this depth
                         mutants.append(
                             {
@@ -493,7 +704,7 @@ def generate_mutation_suite(
                                 "db_id": db,
                                 "depth": depth,
                                 "operators": new_sequence,
-                                "mutated_sql": mutated_sql,
+                                "mutated_sql": new_sql,
                                 "error_count": depth,
                                 "gold_sql": sql,
                             }

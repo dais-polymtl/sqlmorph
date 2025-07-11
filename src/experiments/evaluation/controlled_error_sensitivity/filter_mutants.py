@@ -1,8 +1,9 @@
+# filter_mutants.py
 """
-filter_sequential_mutants.py - Extract cumulative error progression patterns
+Extract ALL cumulative error progression patterns using recursive chain discovery
 
-This script processes mutation testing data to identify valid error progression patterns
-where mutations build cumulatively from one depth to the next:
+This script processes mutation testing data to identify and extract ALL valid error
+progression patterns where mutations build cumulatively from one depth to the next:
 
     depth 1: [e1]
     depth 2: [e1, e2]
@@ -10,25 +11,43 @@ where mutations build cumulatively from one depth to the next:
     depth 4: [e1, e2, e3, e4]
     ...and so on
 
-The script automatically detects the maximum depth available in the dataset and:
-1. Groups mutations by question_id
-2. Identifies ALL valid progression chains where operators at each depth include all
-   operators from the previous depth plus exactly one new operator
-3. Enriches the data with additional fields:
-   - error_pattern: The full error sequence as a string (e.g., "op1 → op2 → op3")
-   - pattern_position: The position in the pattern (1, 2, 3, etc.)
+Key Features:
+- Automatically detects the maximum depth available in the dataset
+- Uses recursive algorithm to discover ALL possible valid progression chains
+- Finds multiple progression patterns per question when they exist
+- Only includes questions that have mutations at ALL depth levels (1 through max_depth)
 
-Output:
-    - sequential_mutants.json containing only mutations that form complete chains
-    - Console statistics showing pattern distribution and analysis
-    - Optional visualization of depth distribution when PLOT_DISTRIBUTION is True
+Algorithm:
+1. Groups mutations by question_id
+2. For each question with complete depth coverage (1 to max_depth):
+   - Starts with each depth-1 mutation as a potential chain root
+   - Recursively explores all valid extensions at subsequent depths
+   - A valid extension must contain all previous operators plus exactly one new operator
+3. Enriches the data with pattern metadata:
+   - error_pattern: The complete error sequence as a string (e.g., "op1 → op2 → op3")
+   - pattern_position: The position in the pattern (equals depth: 1, 2, 3, etc.)
+
+Output Files:
+- mutants_error_patterns.json: All mutations that form complete valid chains
+- filter_mutants_stats.txt: Comprehensive statistics including:
+  * Total questions with valid patterns
+  * Number of unique error patterns discovered
+  * Average patterns per question
+  * Pattern frequency analysis
+  * Top error patterns with distinct operators
+
+Statistics Provided:
+- Pattern distribution across questions
+- Average number of questions per pattern
+- Most common error patterns (all patterns)
+- Top patterns with completely distinct operators (no shared operators)
 """
 
 import json
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 from collections import defaultdict
-import matplotlib.pyplot as plt
 
 # ────────────────────────────────────────────────────────────────────────
 # Configuration variables
@@ -45,7 +64,6 @@ STATS_FILE = (
     ROOT
     / "data/evaluation/experiments/controlled_error_sensitivity/filter_mutants_stats.txt"
 )
-PLOT_DISTRIBUTION = True  # Set to True to display depth distribution plots
 
 
 def filter_sequential_mutations(
@@ -128,15 +146,15 @@ def filter_sequential_mutations(
     filtered_df = pd.DataFrame(valid_groups) if valid_groups else pd.DataFrame()
 
     # Display stats
-    # Only print numeric stats to the console, all details go to file
+    # Write all analysis results and stats to both console and file
     log_stat("\nAnalysis Results:")
     if len(filtered_df) > 0:
         unique_questions = filtered_df["question_id"].nunique()
-        print(
+        log_stat(
             f"Total questions with at least one valid progression pattern: {unique_questions}"
         )
-        print(f"Total mutants in valid patterns: {len(filtered_df)}")
-        print(f"Number of unique error patterns: {len(pattern_groups)}")
+        log_stat(f"Total mutants in valid patterns: {len(filtered_df)}")
+        log_stat(f"Number of unique error patterns: {len(pattern_groups)}")
 
         # Calculate average patterns per question
         total_patterns = sum(patterns_per_question.values())
@@ -145,8 +163,8 @@ def filter_sequential_mutations(
             max(patterns_per_question.values()) if patterns_per_question else 0
         )
 
-        print(f"Average patterns per question: {avg_patterns:.2f}")
-        print(f"Maximum patterns for a single question: {max_patterns}")
+        log_stat(f"Average patterns per question: {avg_patterns:.2f}")
+        log_stat(f"Maximum patterns for a single question: {max_patterns}")
 
         # Calculate average number of questions per pattern
         pattern_counts = (
@@ -157,7 +175,7 @@ def filter_sequential_mutations(
         avg_questions_per_pattern = (
             pattern_counts.mean() if len(pattern_counts) > 0 else 0
         )
-        print(
+        log_stat(
             f"Average number of questions per error pattern: {avg_questions_per_pattern:.2f}"
         )
 
@@ -177,34 +195,22 @@ def filter_sequential_mutations(
                 continue
             stats_output.append(f"  {pattern}: {pattern_count} questions")
             seen_operators.update(operators)
-        # Plot depth distribution within valid patterns
-        if PLOT_DISTRIBUTION:
-            plt.figure(figsize=(10, 6))
-            filtered_df["depth"].value_counts().sort_index().plot(kind="bar")
-            plt.title(
-                f"Distribution of Depths in Valid Error Progression Patterns (1-{MAX_DEPTH})"
-            )
-            plt.xlabel("Depth")
-            plt.ylabel("Count")
-            plt.xticks(rotation=0)
-            plt.grid(axis="y", linestyle="--", alpha=0.7)
-            plt.show()
 
         # Save the filtered DataFrame to JSON
         filtered_json = filtered_df.to_dict(orient="records")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w") as f:
             json.dump(filtered_json, f, indent=2)
-        print(f"\nFiltered mutants saved to {output_path}")
+        log_stat(f"\nFiltered mutants saved to {output_path}")
     else:
-        print(f"No valid progression patterns through depth {MAX_DEPTH} found.")
-        print("Try generating mutants with the sequential pattern approach first.")
+        log_stat(f"No valid progression patterns through depth {MAX_DEPTH} found.")
+        log_stat("Try generating mutants with the sequential pattern approach first.")
 
     # Write statistics to file
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     with open(stats_path, "w") as f:
         f.write("\n".join(stats_output))
-    print(f"Statistics saved to {stats_path}")
+    log_stat(f"Statistics saved to {stats_path}")
 
     return filtered_df
 
