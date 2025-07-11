@@ -32,22 +32,21 @@ Each JSON file must contain records with the following structure:
    • Overall title: "Aggregated Metrics Across All Error Patterns"
    • Saved as: figure2_aggregate_multi_technique.png
 
-3. **Table 1** – Statistical Correlation Analysis:
-   • CSV file containing Spearman ρ and Kendall τ correlations
-   • Correlations computed between error_count and each metric (EX, EXP, EXR, F1)
-   • Separate analysis for each technique and error pattern combination
-   • Robust handling: NaN values ignored, insufficient data points return NaN
-   • Zero variance detection (all values identical) handled gracefully
-   • Columns: technique, error_pattern, metric, spearman_rho, kendall_tau
-   • Saved as: table1_correlations_by_pattern_technique.csv
+3. **Analysis Log** – Comprehensive Text Report:
+   • Text file containing detailed analysis summary
+   • Overview of techniques and error patterns
+   • Data distribution and metric summaries by technique
+   • Detailed breakdown by error pattern showing mean scores
+   • Score trends and changes across error counts
+   • Saved as: analysis_log.txt
 
 **Key Features:**
 - Automatic discovery of technique files using glob pattern matching
 - Dynamic error pattern detection from data (supports any number of patterns)
-- Robust error handling for missing files, incomplete data, or statistical edge cases
+- Robust error handling for missing files, incomplete data
 - Intelligent operator labeling using pattern_position to extract specific operators
 - Fallback mechanisms for backward compatibility with older data formats
-- Comprehensive console output with processing summaries and correlation results
+- Comprehensive console output with processing summaries
 
 **Directory Structure:**
 - Input: data/evaluation/experiments/controlled_error_sensitivity/scores/ex1/
@@ -57,20 +56,15 @@ Each JSON file must contain records with the following structure:
 **Error Handling:**
 - Missing technique files: empty plots with appropriate messages
 - Missing error patterns: filtered out gracefully
-- Statistical computation failures: NaN values with detailed logging
-- Insufficient data points: correlation marked as NaN with reason tracking
+- Missing data: handled with appropriate fallback values
 """
 
 import glob
 import json
-import re
-import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr, kendalltau
 
 # ────────────────────────────────────────────────────────────────────────
 # 0.  File paths – adjust to your environment
@@ -78,12 +72,12 @@ from scipy.stats import spearmanr, kendalltau
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
 SCORES_DIR = (
-    ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex3"
+    ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex4"
 )
 PLOTS_DIR = SCORES_DIR / "plots"
 FIGURE_PATH = PLOTS_DIR / "figure1_error_patterns_multi_technique.png"
 AGGREGATE_FIGURE_PATH = PLOTS_DIR / "figure2_aggregate_multi_technique.png"
-TABLE_PATH = SCORES_DIR / "table1_correlations_by_pattern_technique.csv"
+LOG_PATH = SCORES_DIR / "analysis_log.txt"
 
 # Ensure plots directory exists
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,6 +146,22 @@ def load_technique_data(file_path):
 
 
 # ────────────────────────────────────────────────────────────────────────
+# 2b. Get unique error patterns from all technique files
+# ────────────────────────────────────────────────────────────────────────
+def get_unique_error_patterns(techniques):
+    """Extract unique error patterns from all technique files."""
+    error_patterns = set()
+
+    for tech in techniques:
+        df = load_technique_data(tech["path"])
+        if df is not None and not df.empty and "error_pattern" in df.columns:
+            patterns = df["error_pattern"].dropna().unique()
+            error_patterns.update(patterns)
+
+    return sorted(list(error_patterns))
+
+
+# ────────────────────────────────────────────────────────────────────────
 # 3.  Plot mean scores for a single technique and error pattern
 # ────────────────────────────────────────────────────────────────────────
 def plot_technique_scores(ax, df, technique_name, error_pattern):
@@ -170,7 +180,7 @@ def plot_technique_scores(ax, df, technique_name, error_pattern):
         ax.set_title(f"{technique_name}", fontsize=11, fontweight="bold")
         ax.set_xlabel("Operator Types")
         ax.set_ylabel("Mean Score")
-        ax.set_ylim(0, 1.02)
+        ax.set_ylim(-0.05, 1.02)
         ax.grid(True, linewidth=0.3, alpha=0.6)
         return
 
@@ -191,7 +201,7 @@ def plot_technique_scores(ax, df, technique_name, error_pattern):
         ax.set_title(f"{technique_name}", fontsize=11, fontweight="bold")
         ax.set_xlabel("Operator Types")
         ax.set_ylabel("Mean Score")
-        ax.set_ylim(0, 1.02)
+        ax.set_ylim(-0.05, 1.02)
         ax.grid(True, linewidth=0.3, alpha=0.6)
         return
 
@@ -270,9 +280,9 @@ def plot_technique_scores(ax, df, technique_name, error_pattern):
     ax.set_xticks(x_ticks)
 
     # Set x-tick labels to specific operator names
-    ax.set_xticklabels(x_labels, rotation=45, ha="right")
+    ax.set_xticklabels(x_labels, rotation=15, ha="center")
 
-    ax.set_ylim(0, 1.02)
+    ax.set_ylim(-0.05, 1.02)
     ax.grid(True, linewidth=0.3, alpha=0.6)
     ax.legend(frameon=False, loc="upper right", fontsize=8)
 
@@ -296,7 +306,7 @@ def plot_aggregated_technique_scores(ax, df, technique_name):
         ax.set_title(f"{technique_name}", fontsize=11, fontweight="bold")
         ax.set_xlabel("Error Count")
         ax.set_ylabel("Mean Score")
-        ax.set_ylim(0, 1.02)
+        ax.set_ylim(-0.05, 1.02)
         ax.grid(True, linewidth=0.3, alpha=0.6)
         return
 
@@ -342,137 +352,11 @@ def plot_aggregated_technique_scores(ax, df, technique_name):
     ax.set_xticks(x_ticks)
 
     # Set x-tick labels to simple e1, e2, e3... format
-    ax.set_xticklabels(x_labels)
+    ax.set_xticklabels(x_labels, rotation=0, ha="center")
 
-    ax.set_ylim(0, 1.02)
+    ax.set_ylim(-0.05, 1.02)
     ax.grid(True, linewidth=0.3, alpha=0.6)
     ax.legend(frameon=False, loc="upper right", fontsize=8)
-
-
-# ────────────────────────────────────────────────────────────────────────
-# 4.  Calculate correlations for a single technique with robust error handling
-# ────────────────────────────────────────────────────────────────────────
-def is_correlation_computable(x, y):
-    """
-    Check if correlation can be meaningfully computed between x and y.
-
-    Returns False if:
-    - Less than 2 valid (non-NaN) pairs
-    - Either variable has zero variance (all values the same)
-    - All values are NaN
-    """
-    # Create mask for valid (non-NaN) pairs
-    valid_mask = ~(pd.isna(x) | pd.isna(y))
-
-    if valid_mask.sum() < 2:
-        return False, "Insufficient valid data points"
-
-    x_valid = x[valid_mask]
-    y_valid = y[valid_mask]
-
-    # Check for zero variance (all values the same)
-    if len(np.unique(x_valid)) < 2:
-        return False, "X variable has zero variance"
-
-    if len(np.unique(y_valid)) < 2:
-        return False, "Y variable has zero variance"
-
-    return True, "OK"
-
-
-def safe_correlation(x, y, method="spearman"):
-    """
-    Safely calculate correlation with proper validation and warning suppression.
-
-    Args:
-        x, y: pandas Series or arrays to correlate
-        method: 'spearman' or 'kendall'
-
-    Returns:
-        correlation coefficient (float or NaN if can't compute)
-    """
-    can_compute, reason = is_correlation_computable(x, y)
-
-    if not can_compute:
-        return np.nan
-
-    try:
-        # Suppress scipy warnings for correlation edge cases
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-
-            if method == "spearman":
-                corr, _ = spearmanr(x, y, nan_policy="omit")
-            elif method == "kendall":
-                corr, _ = kendalltau(x, y, nan_policy="omit")
-            else:
-                return np.nan
-
-        # Additional check: if correlation is NaN or infinite, return NaN
-        if not np.isfinite(corr):
-            return np.nan
-
-        return corr
-
-    except Exception:
-        # If anything goes wrong, return NaN
-        return np.nan
-
-
-def calculate_correlations(df, technique_name):
-    """Calculate correlations for each error pattern in a technique."""
-    if df is None or df.empty:
-        return []
-
-    corr_rows = []
-    metrics = ["EX", "EXP", "EXR", "F1"]
-
-    # Group by error_pattern and calculate correlations for each pattern
-    for pattern, pattern_df in df.groupby("error_pattern"):
-        x = pattern_df["error_count"]
-
-        for m in metrics:
-            y = pattern_df[m]
-
-            # Calculate correlations with robust error handling
-            rho = safe_correlation(x, y, method="spearman")
-            tau = safe_correlation(x, y, method="kendall")
-
-            corr_rows.append(
-                {
-                    "technique": technique_name,
-                    "error_pattern": pattern,
-                    "metric": m,
-                    "spearman_rho": rho,
-                    "kendall_tau": tau,
-                }
-            )
-
-    return corr_rows
-
-
-# ────────────────────────────────────────────────────────────────────────
-# 5.  Extract unique error patterns from all data files
-# ────────────────────────────────────────────────────────────────────────
-def get_unique_error_patterns(techniques):
-    """Extract all unique error patterns from the data files."""
-    all_patterns = set()
-
-    for tech in techniques:
-        df = load_technique_data(tech["path"])
-        if df is not None and "error_pattern" in df.columns:
-            patterns = df["error_pattern"].unique()
-            all_patterns.update(patterns)
-
-    # Sort patterns - typically they are named like "pattern1", "pattern2" etc.
-    # Try to sort numerically if pattern names follow this convention
-    def extract_number(pattern_name):
-        match = re.search(r"\d+", pattern_name)
-        if match:
-            return int(match.group())
-        return pattern_name
-
-    return sorted(list(all_patterns), key=extract_number)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -527,8 +411,6 @@ def main():
     elif n_cols == 1:
         axes = axes.reshape(-1, 1)
 
-    all_correlations = []
-
     # Process each error pattern in a separate row
     for row, pattern in enumerate(error_patterns):
         print(f"\nProcessing error pattern: {pattern}")
@@ -547,16 +429,10 @@ def main():
                     axes[row, col], df, technique["display_name"], pattern
                 )
 
-                # Calculate correlations for this pattern
+                # Print summary for this pattern and technique
                 if df is not None and not df.empty:
                     pattern_df = df[df["error_pattern"] == pattern]
                     if not pattern_df.empty:
-                        corr_data = calculate_correlations(
-                            pattern_df, technique["display_name"]
-                        )
-                        all_correlations.extend(corr_data)
-
-                        # Print summary for this pattern and technique
                         mean_tbl = (
                             pattern_df.groupby("error_count")[
                                 ["EX", "EXP", "EXR", "F1"]
@@ -583,7 +459,7 @@ def main():
                 )
                 axes[row, col].set_xlabel("Operator Types")
                 axes[row, col].set_ylabel("Mean Score")
-                axes[row, col].set_ylim(0, 1.02)
+                axes[row, col].set_ylim(-0.05, 1.02)
                 axes[row, col].grid(True, linewidth=0.3, alpha=0.6)
 
     # Save figure
@@ -629,7 +505,7 @@ def main():
             )
             agg_axes[col].set_xlabel("Error Count")
             agg_axes[col].set_ylabel("Mean Score")
-            agg_axes[col].set_ylim(0, 1.02)
+            agg_axes[col].set_ylim(-0.05, 1.02)
             agg_axes[col].grid(True, linewidth=0.3, alpha=0.6)
 
     # Add overall title to the aggregated figure
@@ -642,38 +518,147 @@ def main():
     plt.close()
 
     # ────────────────────────────────────────────────────────────────────
-    # Save correlations table
+    # Save analysis log
     # ────────────────────────────────────────────────────────────────────
-    if all_correlations:
-        cor_df = pd.DataFrame(all_correlations)
-        cor_df.to_csv(TABLE_PATH, index=False)
-        print(f"[✓] Correlations table saved → {TABLE_PATH}")
+    write_analysis_log(techniques, technique_data, error_patterns)
+    print(f"[✓] Analysis log saved → {LOG_PATH}")
 
-        # Print correlation summary
-        print("\nCorrelation Summary by Error Pattern:")
-        print("=" * 60)
-        for pattern in error_patterns:
-            print(f"\n## Error Pattern: {pattern} ##")
+    print("\nAnalysis completed successfully!")
 
-            for technique in techniques:
-                pattern_tech_corr = cor_df[
-                    (cor_df["error_pattern"] == pattern)
-                    & (cor_df["technique"] == technique["display_name"])
-                ]
 
-                if not pattern_tech_corr.empty:
-                    print(f"\n{technique['display_name']}:")
-                    # Show correlations with better formatting
-                    display_df = pattern_tech_corr[
-                        ["metric", "spearman_rho", "kendall_tau"]
-                    ].copy()
-                    for col in ["spearman_rho", "kendall_tau"]:
-                        display_df[col] = display_df[col].apply(
-                            lambda x: f"{x:.3f}" if pd.notna(x) else "NaN"
+def write_analysis_log(techniques, technique_data, error_patterns):
+    """Write comprehensive analysis log to text file."""
+    with open(LOG_PATH, "w") as f:
+        f.write("EXPERIMENT 1 - MULTI-TECHNIQUE ERROR PATTERN ANALYSIS\n")
+        f.write("=" * 60 + "\n\n")
+
+        # Overview section
+        f.write("OVERVIEW\n")
+        f.write("-" * 20 + "\n")
+        f.write(f"Analysis Date: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total Techniques Analyzed: {len(techniques)}\n")
+        f.write(f"Total Error Patterns Found: {len(error_patterns)}\n\n")
+
+        f.write("Techniques:\n")
+        for i, tech in enumerate(techniques, 1):
+            f.write(f"  {i}. {tech['display_name']} ({tech['name']})\n")
+        f.write("\n")
+
+        f.write("Error Patterns:\n")
+        for i, pattern in enumerate(error_patterns, 1):
+            f.write(f"  {i}. {pattern}\n")
+        f.write("\n")
+
+        # Data summary section
+        f.write("DATA SUMMARY BY TECHNIQUE\n")
+        f.write("-" * 30 + "\n")
+
+        total_records = 0
+        for tech in techniques:
+            df = technique_data[tech["name"]]
+            if df is not None and not df.empty:
+                tech_records = len(df)
+                total_records += tech_records
+
+                f.write(f"\n{tech['display_name']}:\n")
+                f.write(f"  Total Records: {tech_records}\n")
+
+                # Error count distribution
+                error_counts = df["error_count"].value_counts().sort_index()
+                f.write("  Error Count Distribution:\n")
+                for count, freq in error_counts.items():
+                    percentage = (freq / tech_records) * 100
+                    f.write(f"    {count} errors: {freq} records ({percentage:.1f}%)\n")
+
+                # Pattern distribution
+                pattern_counts = df["error_pattern"].value_counts()
+                f.write("  Pattern Distribution:\n")
+                for pattern, freq in pattern_counts.items():
+                    percentage = (freq / tech_records) * 100
+                    f.write(f"    {pattern}: {freq} records ({percentage:.1f}%)\n")
+
+                # Metric summary statistics
+                metrics = ["EX", "EXP", "EXR", "F1"]
+                f.write("  Metric Summary Statistics:\n")
+                for metric in metrics:
+                    if metric in df.columns:
+                        mean_val = df[metric].mean()
+                        std_val = df[metric].std()
+                        min_val = df[metric].min()
+                        max_val = df[metric].max()
+                        f.write(
+                            f"    {metric}: mean={mean_val:.3f}, std={std_val:.3f}, "
                         )
-                    print(display_df.to_string(index=False))
-    else:
-        print("[!] No correlation data to save")
+                        f.write(f"range=[{min_val:.3f}, {max_val:.3f}]\n")
+            else:
+                f.write(f"\n{tech['display_name']}: No data available\n")
+
+        f.write(f"\nTotal Records Across All Techniques: {total_records}\n\n")
+
+        # Detailed analysis by error pattern
+        f.write("DETAILED ANALYSIS BY ERROR PATTERN\n")
+        f.write("-" * 40 + "\n")
+
+        for pattern in error_patterns:
+            f.write(f"\n{'='*50}\n")
+            f.write(f"ERROR PATTERN: {pattern}\n")
+            f.write(f"{'='*50}\n")
+
+            pattern_has_data = False
+
+            for tech in techniques:
+                df = technique_data[tech["name"]]
+                if df is not None and not df.empty:
+                    pattern_df = df[df["error_pattern"] == pattern]
+
+                    if not pattern_df.empty:
+                        pattern_has_data = True
+                        f.write(f"\n{tech['display_name']}:\n")
+                        f.write(f"  Records for this pattern: {len(pattern_df)}\n")
+
+                        # Mean scores by error count
+                        mean_tbl = (
+                            pattern_df.groupby("error_count")[
+                                ["EX", "EXP", "EXR", "F1"]
+                            ]
+                            .mean()
+                            .sort_index()
+                        )
+                        f.write("  Mean Scores by Error Count:\n")
+                        f.write(
+                            f"    {'Error':<6} {'EX':<8} {'EXP':<8} {'EXR':<8} {'F1':<8}\n"
+                        )
+                        f.write(f"    {'-'*6} {'-'*8} {'-'*8} {'-'*8} {'-'*8}\n")
+
+                        for error_count, row in mean_tbl.iterrows():
+                            f.write(f"    {error_count:<6} ")
+                            f.write(f"{row['EX']:<8.3f} {row['EXP']:<8.3f} ")
+                            f.write(f"{row['EXR']:<8.3f} {row['F1']:<8.3f}\n")
+
+                        # Score ranges and trends
+                        f.write("  Score Trends:\n")
+                        for metric in ["EX", "EXP", "EXR", "F1"]:
+                            first_score = (
+                                mean_tbl.iloc[0][metric] if len(mean_tbl) > 0 else 0
+                            )
+                            last_score = (
+                                mean_tbl.iloc[-1][metric] if len(mean_tbl) > 0 else 0
+                            )
+                            trend = last_score - first_score
+                            trend_direction = (
+                                "↑" if trend > 0 else "↓" if trend < 0 else "→"
+                            )
+                            f.write(
+                                f"    {metric}: {first_score:.3f} → {last_score:.3f} "
+                            )
+                            f.write(f"(Δ={trend:+.3f} {trend_direction})\n")
+
+            if not pattern_has_data:
+                f.write(f"  No data available for pattern '{pattern}'\n")
+
+        f.write(
+            f"\nAnalysis completed at: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
 
 
 if __name__ == "__main__":

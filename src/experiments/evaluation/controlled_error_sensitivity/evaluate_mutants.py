@@ -102,36 +102,39 @@ MUTANTS_JSON = (
     ROOT
     / "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
 )
-OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex3"
+OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity/scores/ex4"
 
 LOGS_DIR = OUT_DIR / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Multiple evaluation techniques to compare mutation impact across different metrics
 EVALUATION_TECHNIQUES = [
+    EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+    EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
     EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
-    # EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-    # EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
 ]
 
 # Embedding model configuration for semantic evaluation techniques
 EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
 # Configuration options
-SAMPLE_SIZE = (
-    5  # None → score all mutants; small int for quick test (applied to question groups)
-)
+SAMPLE_SIZE = 30  # None → score all mutants; small int for quick test (applied to question groups)
 
 # List of specific error patterns to evaluate
 SPECIFIC_PATTERNS = [
+    ## p-schema
     "projection_drop → add_star_wildcard → distinct_toggle",
-    "predicate_delete → limit_increase → where_condition_flip",
-    "join_break → join_type_change → predicate_delete",
-    "aggregation_swap → having_remove → having_condition_flip",
-    "projection_drop → join_break → aggregation_swap",
+    ## p-filter
+    "limit_increase → where_predicate_delete → where_remove",
+    ### p-join
+    "projection_drop → join_type_change → join_break",
+    ### p-aggregation
+    "aggregation_swap → having_remove → add_star_wildcard",
+    ### p-size
+    "limit_increase → distinct_toggle → where_predicate_delete",
 ]
 
-PER_QUERY_TIMEOUT = 60  # wall-clock seconds per individual query evaluation
+PER_QUERY_TIMEOUT = 30  # wall-clock seconds per individual query evaluation
 LOG = True  # Enable/disable detailed evaluation logging per technique
 FORCE_SEQUENTIAL = True  # Set to True to use 1 worker for all techniques
 # Techniques that use embedding API calls and should use fewer workers
