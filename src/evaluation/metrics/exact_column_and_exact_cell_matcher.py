@@ -59,7 +59,7 @@ def match_columns(context: dict):
     if len(common_cols) == 0:
         context["has_error"] = True
         context["metrics"] = {
-            "EX": 0,
+            "EX": 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0,
             "EXP": 0.0,
             "EXR": 0.0,
             "F1": 0.0,
@@ -155,11 +155,11 @@ def assign_metrics(context: dict):
 
     # Handle empty result cases
     if g_cells == 0 and p_cells == 0:
-        context["metrics"] = {"EX": 1, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
+        context["metrics"] = {"EX": ex, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
     elif g_cells == 0:
-        context["metrics"] = {"EX": 0, "EXP": 0.0, "EXR": 1.0, "F1": 0.0}
+        context["metrics"] = {"EX": ex, "EXP": 0.0, "EXR": 1.0, "F1": 0.0}
     elif p_cells == 0:
-        context["metrics"] = {"EX": 0, "EXP": 1.0, "EXR": 0.0, "F1": 0.0}
+        context["metrics"] = {"EX": ex, "EXP": 1.0, "EXR": 0.0, "F1": 0.0}
     else:
         # Calculate metrics for normal case
         exp = matched_cells / p_cells  # Execution Precision

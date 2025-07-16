@@ -137,12 +137,14 @@ if __name__ == "__main__":
     WHERE T3.element = 'cl'
     """
 
+    db_name = "toxicology"
+
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        "evaluation_technique": EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
         "db_params": {
             "dbms": DBMS.SQLITE,
-            "db_path": "data/benchmarks/Bird/dev_databases/toxicology/toxicology.sqlite",
+            "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
         },
         "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
         "logs_dir_path": "data/evaluation_outputs/",
