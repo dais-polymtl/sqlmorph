@@ -80,15 +80,11 @@ def match_columns(context: dict):
         pred_col_to_idx[col] for col in common_cols if col in pred_col_to_idx
     ]
 
-    # Calculate binary execution accuracy
-    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
-
     context.update(
         {
             "common_cols": common_cols,
             "gt_common_indices": gt_common_indices,
             "pred_common_indices": pred_common_indices,
-            "EX": ex,
         }
     )
 
@@ -155,7 +151,7 @@ def assign_metrics(context: dict):
     matched_cells = context["matched_cells"]
     g_cells = context["ground_truth_cells"]
     p_cells = context["predicted_cells"]
-    ex = context["EX"]
+    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
     # Handle empty result cases
     if g_cells == 0 and p_cells == 0:
