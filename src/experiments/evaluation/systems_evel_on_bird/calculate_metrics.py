@@ -104,25 +104,72 @@ def evaluate_with_techniques(
     if missing_columns:
         raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Initialize columns for each technique
-    for technique in techniques:
-        technique_name = technique.name
-        df[technique_name] = None
-
     # Apply sampling if specified
     if sampling_ratio is not None:
         df = sample_dataframe(df, sampling_ratio)
         print(f"Sampled to {len(df['question_id'].unique())} unique questions")
 
+    # Check if output file already exists and load already evaluated rows
+    evaluated_df = pd.DataFrame()
+    if pd.io.common.file_exists(output_csv_path):
+        evaluated_df = pd.read_csv(output_csv_path)
+        print(f"Found existing output file with {len(evaluated_df)} rows")
+
+        # Create unique identifier for comparison
+        df["unique_id"] = (
+            df["question_id"].astype(str)
+            + "_"
+            + df["system"]
+            + "_"
+            + df["gold_sql"]
+            + "_"
+            + df["predicted_sql"]
+        )
+        evaluated_df["unique_id"] = (
+            evaluated_df["question_id"].astype(str)
+            + "_"
+            + evaluated_df["system"]
+            + "_"
+            + evaluated_df["gold_sql"]
+            + "_"
+            + evaluated_df["predicted_sql"]
+        )
+
+        # Filter out already evaluated rows
+        already_evaluated_ids = set(evaluated_df["unique_id"])
+        df_to_evaluate = df[~df["unique_id"].isin(already_evaluated_ids)].copy()
+
+        print(f"Skipping {len(df) - len(df_to_evaluate)} already evaluated rows")
+        print(f"Will evaluate {len(df_to_evaluate)} remaining rows")
+
+        # Drop the unique_id column as it's only used for comparison
+        df = df.drop("unique_id", axis=1)
+        df_to_evaluate = df_to_evaluate.drop("unique_id", axis=1)
+        evaluated_df = evaluated_df.drop("unique_id", axis=1)
+    else:
+        df_to_evaluate = df.copy()
+        print(
+            f"No existing output file found. Will evaluate all {len(df_to_evaluate)} rows"
+        )
+
+    # Initialize columns for each technique in the dataframe to evaluate
+    for technique in techniques:
+        technique_name = technique.name
+        df_to_evaluate[technique_name] = None
+
     # Evaluate each row
-    total_rows = len(df)
-    for idx, row in df.iterrows():
+    total_rows = len(df_to_evaluate)
+    for idx, row in df_to_evaluate.iterrows():
         print(
             f"Evaluating row {idx + 1}/{total_rows} - DB: {row['db_name']}, System: {row['system']}, Question ID: {row['question_id']}"
         )
 
         db_path = f"{databases_dir}/{row['db_name']}/{row['db_name']}.sqlite"
         print(db_path)
+
+        # Track if all techniques succeeded for this row
+        all_techniques_completed = True
+        row_results = {}
 
         for technique in techniques:
             technique_name = technique.name
@@ -138,38 +185,58 @@ def evaluate_with_techniques(
                 timeout_seconds=timeout_seconds,
             )
 
-            # Store metrics as JSON string for CSV compatibility
+            # Store metrics for this technique
             if metrics is not None:
-                df.at[idx, technique_name] = json.dumps(metrics)
-            else:
-                df.at[idx, technique_name] = None
-
-            # Log the result
-            if metrics:
+                row_results[technique_name] = json.dumps(metrics)
                 main_metric = list(metrics.values())[0] if metrics else None
                 print(f"    {technique_name} Result: {main_metric}")
             else:
+                row_results[technique_name] = None
+                all_techniques_completed = False
                 print(f"    {technique_name}: FAILED")
 
-        # Save progress after each row
-        df.to_csv(output_csv_path, index=False)
-        print(f"Progress saved at row {idx + 1}")
+        # Only write row to CSV if all techniques completed successfully
+        if all_techniques_completed:
+            # Update the row with results
+            for technique_name, result in row_results.items():
+                df_to_evaluate.at[idx, technique_name] = result
+
+            # Create a single row dataframe for this evaluated row
+            evaluated_row = df_to_evaluate.loc[[idx]]
+
+            # Append to existing results
+            if len(evaluated_df) > 0:
+                evaluated_df = pd.concat(
+                    [evaluated_df, evaluated_row], ignore_index=True
+                )
+            else:
+                evaluated_df = evaluated_row.copy()
+
+            # Save progress after each successful row
+            evaluated_df.to_csv(output_csv_path, index=False)
+            print(f"Row {idx + 1} successfully evaluated and saved")
+        else:
+            print(f"Row {idx + 1} had failures, not saving to output")
 
     print(f"Evaluation complete. Results saved to {output_csv_path}")
 
     # Print summary statistics for each technique
     print("\nSummary:")
-    print(f"Total rows: {total_rows}")
+    total_evaluated = len(evaluated_df)
+    print(f"Total successfully evaluated rows: {total_evaluated}")
 
     for technique in techniques:
         technique_name = technique.name
-        success_count = len(df[df[technique_name].notna()])
-        success_percentage = success_count / total_rows * 100
-        print(
-            f"{technique_name}: {success_count} successful evaluations ({success_percentage:.2f}%)"
-        )
+        if len(evaluated_df) > 0:
+            success_count = len(evaluated_df[evaluated_df[technique_name].notna()])
+            success_percentage = (
+                success_count / total_evaluated * 100 if total_evaluated > 0 else 0
+            )
+            print(
+                f"{technique_name}: {success_count} successful evaluations ({success_percentage:.2f}%)"
+            )
 
-    return df
+    return evaluated_df
 
 
 def sample_dataframe(df: pd.DataFrame, sampling_ratio) -> pd.DataFrame:
@@ -204,12 +271,10 @@ def sample_dataframe(df: pd.DataFrame, sampling_ratio) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    experiment_id = "ex1"
-
     ROOT = "data/evaluation/experiments/systems_evel_on_bird"
     input_csv_path = ROOT + "/systems_data.csv"
-    output_csv_path = ROOT + f"/systems_data_with_metrics_{experiment_id}.csv"
-    log_dir = ROOT + f"/logs/{experiment_id}"
+    output_csv_path = ROOT + "/systems_data_with_metrics.csv"
+    log_dir = ROOT + "/logs/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
 
@@ -223,7 +288,7 @@ if __name__ == "__main__":
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
     timeout_seconds = 60  # Timeout for each single evaluation
-    sampling_ratio = 100  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
+    sampling_ratio = 30  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
 
     result_df = evaluate_with_techniques(
         csv_file_path=input_csv_path,
