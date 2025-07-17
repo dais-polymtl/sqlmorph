@@ -59,7 +59,7 @@ def match_columns(context: dict):
     if len(common_cols) == 0:
         context["has_error"] = True
         context["metrics"] = {
-            "EX": 0,
+            "EX": 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0,
             "EXP": 0.0,
             "EXR": 0.0,
             "F1": 0.0,
@@ -80,15 +80,11 @@ def match_columns(context: dict):
         pred_col_to_idx[col] for col in common_cols if col in pred_col_to_idx
     ]
 
-    # Calculate binary execution accuracy
-    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
-
     context.update(
         {
             "common_cols": common_cols,
             "gt_common_indices": gt_common_indices,
             "pred_common_indices": pred_common_indices,
-            "EX": ex,
         }
     )
 
@@ -155,15 +151,15 @@ def assign_metrics(context: dict):
     matched_cells = context["matched_cells"]
     g_cells = context["ground_truth_cells"]
     p_cells = context["predicted_cells"]
-    ex = context["EX"]
+    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
 
     # Handle empty result cases
     if g_cells == 0 and p_cells == 0:
-        context["metrics"] = {"EX": 1, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
+        context["metrics"] = {"EX": ex, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
     elif g_cells == 0:
-        context["metrics"] = {"EX": 0, "EXP": 0.0, "EXR": 1.0, "F1": 0.0}
+        context["metrics"] = {"EX": ex, "EXP": 0.0, "EXR": 1.0, "F1": 0.0}
     elif p_cells == 0:
-        context["metrics"] = {"EX": 0, "EXP": 1.0, "EXR": 0.0, "F1": 0.0}
+        context["metrics"] = {"EX": ex, "EXP": 1.0, "EXR": 0.0, "F1": 0.0}
     else:
         # Calculate metrics for normal case
         exp = matched_cells / p_cells  # Execution Precision

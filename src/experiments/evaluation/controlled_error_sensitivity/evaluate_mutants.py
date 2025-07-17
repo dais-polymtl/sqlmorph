@@ -15,17 +15,18 @@ Process
 2. Apply smart sampling by specific error patterns and complete question_id groups
 3. For each evaluation technique:
    - Create evaluation run with adaptive worker count (1 for API-heavy techniques, more for others)
-   - Use ThreadPoolExecutor with subprocess isolation (≤ 60s per query)
+   - Use ThreadPoolExecutor with subprocess isolation (≤ 30s per query)
    - Apply quality filtering to remove problematic questions with EX=1
    - Generate technique-specific output file
+   - Calculate and display summary statistics including pattern distribution
 4. Each mutant is evaluated inside its own short-lived subprocess with SIGALRM timeout
-5. Results are saved as separate JSON files per technique in the scores/ex3 directory
+5. Results are saved as separate JSON files per technique in the scores/ex4 directory
 
 Sampling Strategy
 ─────────────────
 • SPECIFIC_PATTERNS: Filter to only include mutants with specified error patterns
 • SAMPLE_SIZE: When set, sample complete question_id groups (not individual mutants)
-• This ensures all depth levels (1, 2, 3) for each original query are included together
+• This ensures all depth levels for each original query are included together
 • From each pattern group, sample up to SAMPLE_SIZE question groups for diversity
 • Quality filtering removes question_id groups where any mutant achieves EX=1
   (suggests problematic queries where errors don't affect results)
@@ -46,7 +47,7 @@ Logging
 Performance
 ───────────
 • Uses ThreadPoolExecutor with adaptive worker count per technique
-• Each query evaluation is isolated in subprocess with SIGALRM timeout (60s default)
+• Each query evaluation is isolated in subprocess with SIGALRM timeout (30s default)
 • Multiprocessing uses 'fork' method for macOS/Jupyter compatibility
 
 Output Files
@@ -62,7 +63,7 @@ Configuration
 • SPECIFIC_PATTERNS: List of error patterns to evaluate (filters before sampling)
 • LOG: True/False to control detailed evaluation logging
 • FORCE_SEQUENTIAL: True to use 1 worker for all techniques
-• PER_QUERY_TIMEOUT: Timeout in seconds for individual query evaluation (default 60s)
+• PER_QUERY_TIMEOUT: Timeout in seconds for individual query evaluation (default 30s)
 • EVALUATION_TECHNIQUES: List of EvaluationTechnique enums to compare
 • EMBEDDING_MODEL: OpenAI embedding model for semantic evaluation techniques
 

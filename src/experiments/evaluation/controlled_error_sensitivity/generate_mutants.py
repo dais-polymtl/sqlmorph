@@ -41,9 +41,9 @@ The mutation generation follows a depth-based incremental approach:
    the correct SQL state (e.g., after `where_predicate_delete` has already
    removed predicates at depth 2).
 
-4. **Conflict Avoidance**: Some operators are mutually incompatible (e.g.,
-   each operator conflicts with itself to prevent duplicate application).
-   The algorithm detects and avoids such conflicting combinations.
+4. **Conflict Avoidance**: Currently, each operator conflicts only with itself
+   to prevent duplicate application. The algorithm detects and avoids selecting
+   operators that would conflict with any previously selected operator.
 
 5. **Validation**: Each mutation sequence is validated to ensure:
    - All operators can be applied successfully
@@ -81,19 +81,20 @@ We implement 13 atomic mutation operators that target different SQL components:
 
 Operator Conflicts
 ──────────────────
-Each operator conflicts with itself to prevent duplicate application within
-the same mutation sequence. This ensures that each operator type is applied
-at most once per sequence, maintaining meaningful and distinct mutations.
+In the current implementation, each operator conflicts only with itself to prevent
+duplicate application within the same mutation sequence. This ensures that each
+operator type is applied at most once per sequence, maintaining meaningful and
+distinct mutations.
 
-The conflict detection system prevents selecting operators that would neutralize
-each other's effects or create redundant mutations, ensuring each sequence
-produces a unique and meaningful variant.
+The OPERATOR_CONFLICTS dictionary structure allows for defining more complex
+conflicts between different operators if needed, though currently only
+self-conflicts are defined.
 
 Correctness safeguards
 ──────────────────────
 1.  **Each operator returns a boolean**
     • True  → it modified the AST.
-    • False → it could not apply and the whole sequence is abandoned.
+    • False → it could not apply and the sequence is abandoned.
 
 2.  **Final structural equality check**
     Even if every operator claims "changed", a later operator might UNDO
@@ -102,7 +103,8 @@ Correctness safeguards
 
 3.  **Conflict detection**
     Each operator conflicts with itself to prevent duplicate application.
-    We avoid selecting conflicting operators in the same sequence.
+    The has_conflict() function checks if a new operator would conflict
+    with any previously selected operators.
 
 4.  **SQL Rendering & Validation**
     All SQL is rendered with `dialect="sqlite"` to ensure consistent

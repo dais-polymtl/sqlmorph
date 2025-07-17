@@ -123,26 +123,18 @@ class Evaluation:
 
 if __name__ == "__main__":
     # Example usage
-    predicted_sql = """
-    SELECT DISTINCT T1.bond_type 
-    FROM bond AS T1 
-    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 
-    WHERE T3.element <> 'cl'
-    """
+    predicted_sql = " SELECT COUNT(T1.uuid) FROM cards AS T1 INNER JOIN foreign_data AS T2 ON T1.uuid = T2.uuid WHERE T1.borderColor = 'borderless' AND T2.language = 'Russian' "
 
-    ground_truth_sql = """
-    SELECT DISTINCT T1.bond_type 
-    FROM bond AS T1 
-    INNER JOIN connected AS T2 ON T1.bond_id = T2.bond_id INNER JOIN atom AS T3 ON T2.atom_id = T3.atom_id 
-    WHERE T3.element = 'cl'
-    """
+    ground_truth_sql = "SELECT COUNT(T1.id) FROM cards AS T1 INNER JOIN foreign_data AS T2 ON T1.uuid = T2.uuid WHERE T1.borderColor = 'borderless' AND T2.language = 'Russian'"
+
+    db_name = "card_games"
 
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        "evaluation_technique": EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
         "db_params": {
             "dbms": DBMS.SQLITE,
-            "db_path": "data/benchmarks/Bird/dev_databases/toxicology/toxicology.sqlite",
+            "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
         },
         "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
         "logs_dir_path": "data/evaluation_outputs/",
