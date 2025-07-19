@@ -99,9 +99,10 @@ def match_columns(context):
 
     # Compute column coverage penalty
     gt_set = set(gt_cols)
-    coverage_penalty = (
-        len(set(pred_cols).intersection(gt_set)) / len(gt_set) if gt_set else 1.0
-    )
+    if not gt_set or len(gt_set) == 1:
+        coverage_penalty = 1.0
+    else:
+        coverage_penalty = len(set(pred_cols).intersection(gt_set)) / len(gt_set)
 
     context.update(
         {
