@@ -4,6 +4,11 @@ import os
 import pandas as pd
 
 
+def process_predicted_sql(predicted_sql: str) -> str:
+    """Remove newlines and extra spaces from predicted SQL."""
+    return " ".join(predicted_sql.split())
+
+
 def read_chess_data(chess_dir_path: str) -> pd.DataFrame:
     """Read data from chess system directory containing JSON files."""
     data_rows = []
@@ -51,7 +56,9 @@ def read_chess_data(chess_dir_path: str) -> pd.DataFrame:
                                 "question_id": question_id,
                                 "question": final_sql.get("Question", ""),
                                 "gold_sql": final_sql.get("GOLD_SQL", ""),
-                                "predicted_sql": final_sql.get("PREDICTED_SQL", ""),
+                                "predicted_sql": process_predicted_sql(
+                                    final_sql.get("PREDICTED_SQL", "")
+                                ),
                             }
                             data_rows.append(row)
                             final_sql_found = True
@@ -121,7 +128,9 @@ def read_mac_sql_data(mac_sql_dir_path: str) -> pd.DataFrame:
                                 "question_id": item.get("idx", 0),
                                 "question": item.get("query", ""),
                                 "gold_sql": item.get("ground_truth", ""),
-                                "predicted_sql": item.get("final_sql", ""),
+                                "predicted_sql": process_predicted_sql(
+                                    item.get("final_sql", "")
+                                ),
                             }
                             data_rows.append(data_row)
                     except json.JSONDecodeError as e:
@@ -200,14 +209,13 @@ def read_din_sql_data(din_sql_dir_path: str) -> pd.DataFrame:
 
                 # Extract predicted SQL (part before \t----- bird -----)
                 predicted_sql = predicted_full.split("\t----- bird -----")[0]
-
                 data_row = {
                     "system": "din-sql",
                     "db_name": row["db_id"],
                     "question_id": question_id,
                     "question": row["question"],
                     "gold_sql": row["gold_query"],
-                    "predicted_sql": predicted_sql,
+                    "predicted_sql": process_predicted_sql(predicted_sql),
                 }
                 data_rows.append(data_row)
 
