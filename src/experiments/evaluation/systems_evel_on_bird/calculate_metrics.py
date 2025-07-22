@@ -73,6 +73,7 @@ def evaluate_with_techniques(
     output_csv_path: str = None,
     timeout_seconds: int = 60,
     sampling_ratio=None,
+    random_seed=None,
 ) -> pd.DataFrame:
     if output_csv_path is None:
         output_csv_path = csv_file_path.replace(".csv", "_with_metrics.csv")
@@ -95,7 +96,7 @@ def evaluate_with_techniques(
 
     # Apply sampling if specified
     if sampling_ratio is not None:
-        df = sample_dataframe(df, sampling_ratio)
+        df = sample_dataframe(df, sampling_ratio, random_seed)
         print(f"Sampled to {len(df['question_id'].unique())} unique questions")
 
     # Check if output file already exists and load already evaluated rows
@@ -223,7 +224,12 @@ def evaluate_with_techniques(
     return evaluated_df
 
 
-def sample_dataframe(df: pd.DataFrame, sampling_ratio) -> pd.DataFrame:
+def sample_dataframe(
+    df: pd.DataFrame, sampling_ratio, random_seed=None
+) -> pd.DataFrame:
+    if random_seed is not None:
+        np.random.seed(random_seed)
+
     unique_question_ids = df["question_id"].unique()
 
     if isinstance(sampling_ratio, int):
@@ -272,7 +278,8 @@ if __name__ == "__main__":
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
     timeout_seconds = 120  # Timeout for each single evaluation
-    sampling_ratio = 10  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
+    sampling_ratio = 1  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
+    random_seed = 42  # Random seed for reproducible sampling
 
     result_df = evaluate_with_techniques(
         csv_file_path=input_csv_path,
@@ -283,6 +290,7 @@ if __name__ == "__main__":
         output_csv_path=output_csv_path,
         timeout_seconds=timeout_seconds,
         sampling_ratio=sampling_ratio,
+        random_seed=random_seed,
     )
 
     print("Done!")
