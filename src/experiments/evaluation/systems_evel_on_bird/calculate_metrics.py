@@ -31,7 +31,11 @@ def calculate_metrics(
         ground_truth_sql=gold_sql,
         log=True,
     )
-    return res["metrics"]
+
+    # Combine metrics and latency into a single dictionary
+    result = res["metrics"].copy()
+    result["latency"] = res["latency"]
+    return result
 
 
 def evaluate_single_row(
@@ -41,7 +45,7 @@ def evaluate_single_row(
     technique: EvaluationTechnique,
     log_dir: str,
     embedding_model,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 120,
 ) -> dict:
     def run_calculation():
         return calculate_metrics(
@@ -267,8 +271,8 @@ if __name__ == "__main__":
 
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
-    timeout_seconds = 60  # Timeout for each single evaluation
-    sampling_ratio = 20  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
+    timeout_seconds = 120  # Timeout for each single evaluation
+    sampling_ratio = 10  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
 
     result_df = evaluate_with_techniques(
         csv_file_path=input_csv_path,
