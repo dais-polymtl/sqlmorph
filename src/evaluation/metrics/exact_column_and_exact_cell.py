@@ -44,9 +44,36 @@ def execute_query(context: dict):
         return context
 
 
+def check_ex(context: dict):
+    logger.log("debug", "function check_execution_accuracy called")
+    if context["has_error"]:
+        return context
+
+    ex = 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0
+
+    # If EX is 1, set all metrics to 1 and skip remaining stages
+    if ex == 1:
+        context["metrics"] = {"EX": 1, "EXP": 1.0, "EXR": 1.0, "F1": 1.0}
+        context["ex_is_one"] = True
+        logger.log(
+            "info",
+            "EX_IS_ONE_SKIPPING_REMAINING_STAGES",
+            {
+                "EX": 1,
+                "EXP": 1.0,
+                "EXR": 1.0,
+                "F1": 1.0,
+            },
+        )
+    else:
+        context["ex_is_one"] = False
+
+    return context
+
+
 def match_columns(context: dict):
     logger.log("debug", "function match_columns called")
-    if context["has_error"]:
+    if context["has_error"] or context.get("ex_is_one", False):
         return context
 
     gt_cols = context["gt_cols"]
@@ -93,7 +120,7 @@ def match_columns(context: dict):
 
 def match_rows(context: dict):
     logger.log("debug", "function match_rows called")
-    if context["has_error"]:
+    if context["has_error"] or context.get("ex_is_one", False):
         return context
 
     gt_rows = context["gt_rows"]
@@ -144,7 +171,7 @@ def match_rows(context: dict):
 
 def assign_metrics(context: dict):
     logger.log("debug", "function assign_metrics called")
-    if context["has_error"]:
+    if context["has_error"] or context.get("ex_is_one", False):
         return context
 
     # Extract values from context
@@ -193,11 +220,13 @@ def run_evaluation_pipeline(
         "ground_truth_sql": ground_truth_sql,
         "metrics": {},
         "has_error": False,
+        "ex_is_one": False,
     }
 
     start_time = time.time()
 
     context = execute_query(context)
+    context = check_ex(context)
     context = match_columns(context)
     context = match_rows(context)
     context = assign_metrics(context)
