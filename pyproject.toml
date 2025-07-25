@@ -10,6 +10,7 @@ dependencies = [
     "jinja2>=3.1.5",
     "loguru>=0.7.3",
     "matplotlib>=3.10.0",
+    "matplotlib-venn>=1.1.2",
     "networkx>=3.4.2",
     "notebook>=7.4.3",
     "ollama>=0.4.7",
