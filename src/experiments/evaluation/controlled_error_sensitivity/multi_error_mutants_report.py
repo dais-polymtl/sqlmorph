@@ -1,4 +1,4 @@
-# report.py
+# multi_pattern_report.py
 """
 Experiment 1 – Sensitivity to Controlled Error Counts (Multi-Technique Analysis)
 ─────────────────────────────────────────────────────────────────────────────────

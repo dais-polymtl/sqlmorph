@@ -78,16 +78,15 @@ from __future__ import annotations
 
 import copy
 import json
-import multiprocessing as mp
 import os
 import random
-import signal
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict
 
+from func_timeout import func_timeout, FunctionTimedOut
 from tqdm import tqdm
 
 from src.core.database.database_handler import DBMS
@@ -135,7 +134,7 @@ SPECIFIC_PATTERNS = [
     "limit_increase → distinct_toggle → where_predicate_delete",
 ]
 
-PER_QUERY_TIMEOUT = 30  # wall-clock seconds per individual query evaluation
+PER_QUERY_TIMEOUT = 120  # wall-clock seconds per individual query evaluation
 LOG = True  # Enable/disable detailed evaluation logging per technique
 FORCE_SEQUENTIAL = True  # Set to True to use 1 worker for all techniques
 # Techniques that use embedding API calls and should use fewer workers
@@ -374,48 +373,32 @@ def get_optimal_worker_count(technique: EvaluationTechnique) -> int:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 3.  Subprocess worker – evaluates one mutant with SIGALRM timeout
+# 3.  Direct evaluation with func_timeout
 # ──────────────────────────────────────────────────────────────────────────
-def _worker(cfg: dict, pred_sql: str, gold_sql: str, q: mp.Queue):
+def _evaluate_with_timeout(cfg: dict, pred_sql: str, gold_sql: str) -> tuple:
     """
-    Executes Evaluation.run_evaluation with a configurable timeout alarm.
-
-    This function runs in an isolated subprocess to prevent hanging
-    evaluations from blocking the entire pipeline. Uses SIGALRM for
-    strict timeout enforcement.
+    Executes Evaluation.run_evaluation with func_timeout.
 
     Args:
         cfg: Evaluation configuration dictionary
         pred_sql: Mutated SQL to evaluate
         gold_sql: Ground truth SQL for comparison
-        q: Multiprocessing queue for result communication
 
-    Queue Output:
+    Returns:
         (metrics_dict, latency) on success
         (None, -1) on error or timeout
     """
-
-    def _timeout(_s, _f):
-        raise TimeoutError("Evaluation timeout exceeded")
-
-    signal.signal(signal.SIGALRM, _timeout)
-    signal.alarm(PER_QUERY_TIMEOUT)
-
     start = time.time()
     try:
         ctx = Evaluation(cfg).run_evaluation(
             predicted_sql=pred_sql,
             ground_truth_sql=gold_sql,
-            log=LOG,  # Use configurable LOG flag
+            log=LOG,
         )
         latency = ctx.get("latency", time.time() - start)
-        q.put((ctx["metrics"], latency))
+        return (ctx["metrics"], latency)
     except Exception:
-        # For debugging: could log the exception type/message
-        # print(f"Worker evaluation failed: {type(e).__name__}: {e}")
-        q.put((None, -1))
-    finally:
-        signal.alarm(0)  # cancel alarm to prevent signal leakage
+        return (None, -1)
 
 
 def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
@@ -423,10 +406,9 @@ def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
     Wrapper executed by the thread pool for each mutant evaluation.
 
     Process:
-    1. Creates subprocess-specific config with correct database path
-    2. Spawns isolated subprocess for evaluation with timeout
-    3. Enforces wall-clock timeout and handles subprocess cleanup
-    4. Merges evaluation metrics back into mutant dictionary
+    1. Creates evaluation config with correct database path
+    2. Uses func_timeout for timeout enforcement
+    3. Merges evaluation metrics back into mutant dictionary
 
     Args:
         mutant: Mutant dictionary containing SQL and metadata
@@ -435,27 +417,20 @@ def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
     Returns:
         Updated mutant dict with EX/EXP/EXR/F1/latency fields
     """
-    # Create subprocess-specific config with correct database path
+    # Create config with correct database path
     cfg = copy.deepcopy(template_cfg)
     db_file = DEV_DB_ROOT / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
     cfg["db_params"]["db_path"] = str(db_file)
 
-    # Spawn subprocess with timeout enforcement
-    q = mp.Queue(1)
-    p = mp.Process(
-        target=_worker, args=(cfg, mutant["mutated_sql"], mutant["gold_sql"], q)
-    )
-    p.start()
-    p.join(PER_QUERY_TIMEOUT)
-
-    # Handle subprocess cleanup and timeout
-    if p.is_alive():
-        p.terminate()
-        p.join()
-
-    # Extract results from subprocess
+    # Use func_timeout for evaluation
     try:
-        metrics, latency = q.get_nowait()
+        metrics, latency = func_timeout(
+            PER_QUERY_TIMEOUT,
+            _evaluate_with_timeout,
+            args=(cfg, mutant["mutated_sql"], mutant["gold_sql"]),
+        )
+    except FunctionTimedOut:
+        metrics, latency = None, -1
     except Exception:
         metrics, latency = None, -1
 
@@ -596,9 +571,6 @@ def main():
     for pattern, count in sorted(pattern_counts.items()):
         print(f"  → {pattern}: {count} mutants")
 
-    # Set multiprocessing method for subprocess safety
-    mp.set_start_method("fork", force=True)  # safe for macOS / Jupyter
-
     # Display configuration
     print("\nConfiguration:")
     print(f"  Embedding model: {EMBEDDING_MODEL.value}")
@@ -606,7 +578,7 @@ def main():
     print(f"  Logging enabled: {LOG}")
     print(f"  Force sequential: {FORCE_SEQUENTIAL}")
     print(f"  Output directory: {OUT_DIR}")
-    print(f"  Log directory: {LOGS_DIR}")  # Show the single log dir
+    print(f"  Log directory: {LOGS_DIR}")
     print(f"  Sample size per pattern: {SAMPLE_SIZE}")
     print(f"  Specific patterns: {SPECIFIC_PATTERNS}")
 

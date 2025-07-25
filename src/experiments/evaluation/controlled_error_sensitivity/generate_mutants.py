@@ -52,11 +52,10 @@ The mutation generation follows a depth-based incremental approach:
 
 Mutation Operators
 ──────────────────
-We implement 13 atomic mutation operators that target different SQL components:
+We implement 12 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
-• `distinct_toggle` — Toggles DISTINCT on/off in a query
 • `add_star_wildcard` — Adds * or alias.* to SELECT list
 
 **WHERE Clause Mutations:**
@@ -71,7 +70,7 @@ We implement 13 atomic mutation operators that target different SQL components:
 
 **JOIN Mutations:**
 • `join_break` — Removes the ON condition from a JOIN clause
-• `join_type_change` — Changes JOIN type (e.g., INNER to LEFT or LEFT to INNER)
+• `join_type_to_left` — Changes any JOIN to LEFT JOIN (makes joins more inclusive)
 
 **Aggregation Mutations:**
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
@@ -85,10 +84,6 @@ In the current implementation, each operator conflicts only with itself to preve
 duplicate application within the same mutation sequence. This ensures that each
 operator type is applied at most once per sequence, maintaining meaningful and
 distinct mutations.
-
-The OPERATOR_CONFLICTS dictionary structure allows for defining more complex
-conflicts between different operators if needed, though currently only
-self-conflicts are defined.
 
 Correctness safeguards
 ──────────────────────
@@ -139,8 +134,8 @@ ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
 BIRD_DEV_JSON = ROOT / "data/benchmarks/Bird/bird_dev.json"
 OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity"
-OUT_FILE = OUT_DIR / "mutants.json"
-MAX_DEPTH = 3  # Set this value to the desired max depth
+OUT_FILE = OUT_DIR / "single_operator_mutants.json"
+MAX_DEPTH = 1  # Set this value to the desired max depth
 
 
 # Load BIRD-dev once
@@ -393,63 +388,26 @@ def having_condition_flip(ast: SqlAst) -> bool:
     return False
 
 
-def join_type_change(ast: SqlAst) -> bool:
+def join_type_to_left(ast: SqlAst) -> bool:
     """
-    Change JOIN type (e.g., INNER to LEFT or LEFT to INNER).
-    This alters result cardinality and inclusion of records without matches.
+    Change any type of JOIN to LEFT JOIN.
+    This makes joins more inclusive, often returning more rows.
+    Only targets joins that are not already LEFT JOINs.
     """
     joins = list(ast.find_all(exp.Join))
-    j = _rc(joins)
-    if not j:
-        return False
+    candidates = []
 
-    # Get current join type more carefully
-    current_type = j.args.get("kind")
+    for j in joins:
+        current_type = j.args.get("kind")
+        # Only consider joins that are not already LEFT joins
+        if current_type != "LEFT":
+            candidates.append(j)
 
-    # Handle different join type representations
-    if current_type is None:
-        # No explicit type means INNER JOIN (default)
+    j = _rc(candidates)
+    if j:
         j.set("kind", "LEFT")
         return True
-    elif isinstance(current_type, str):
-        if current_type == "LEFT":
-            j.set("kind", None)  # Change to INNER (no explicit type)
-            return True
-        elif current_type == "RIGHT":
-            j.set("kind", "LEFT")
-            return True
-        elif current_type == "INNER":
-            j.set("kind", "LEFT")
-            return True
-        elif current_type == "FULL":
-            j.set("kind", "LEFT")
-            return True
-
-    # If we get here, we couldn't determine how to change the join type
     return False
-
-
-def distinct_toggle(ast: SqlAst) -> bool:
-    """
-    Toggle DISTINCT on/off in a query.
-    This changes result cardinality by including/excluding duplicates.
-    """
-    sel = ast.find(exp.Select)
-    if not sel:
-        return False
-
-    # Get current distinct value
-    current_distinct = sel.args.get("distinct")
-
-    # Toggle distinct on/off
-    if current_distinct is None or current_distinct is False:
-        # Turn on DISTINCT - use an empty exp.Distinct object instead of a boolean
-        sel.set("distinct", exp.Distinct())
-    else:
-        # Turn off DISTINCT
-        sel.set("distinct", None)
-
-    return True
 
 
 def limit_increase(ast: SqlAst) -> bool:
@@ -512,8 +470,7 @@ OPERATORS: Dict[str, callable] = {
     "add_star_wildcard": add_star_wildcard,
     "where_condition_flip": where_condition_flip,
     "having_condition_flip": having_condition_flip,
-    "join_type_change": join_type_change,
-    "distinct_toggle": distinct_toggle,
+    "join_type_to_left": join_type_to_left,
     "limit_increase": limit_increase,
     "having_remove": having_remove,
 }
@@ -530,14 +487,12 @@ OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
     "where_remove": {"where_remove"},
     "having_predicate_delete": {"having_predicate_delete"},
     "join_break": {"join_break"},
-    "join_type_change": {"join_type_change"},
+    "join_type_to_left": {"join_type_to_left"},
     "aggregation_swap": {"aggregation_swap"},
     "where_condition_flip": {"where_condition_flip"},
     "having_condition_flip": {"having_condition_flip"},
-    "distinct_toggle": {"distinct_toggle"},
     "limit_increase": {"limit_increase"},
     "having_remove": {"having_remove"},
-    # Add more conflicts as needed
 }
 
 
