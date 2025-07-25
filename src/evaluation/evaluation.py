@@ -123,15 +123,14 @@ class Evaluation:
 
 if __name__ == "__main__":
     # Example usage
-    predicted_sql = " SELECT COUNT(T1.uuid) FROM cards AS T1 INNER JOIN foreign_data AS T2 ON T1.uuid = T2.uuid WHERE T1.borderColor = 'borderless' AND T2.language = 'Russian' "
+    predicted_sql = "SELECT sub.MailStreet, sub.School, sub.MailCity, sub.MailState, sub.FRPM FROM (SELECT T2.MailStreet AS MailStreet, T2.School AS School, T2.MailCity AS MailCity, T2.MailState AS MailState, T1.`FRPM Count (K-12)` AS FRPM, T2.County AS County, T2.District AS District, T2.Zip AS Zip, T2.Phone AS Phone FROM frpm AS T1 JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY FRPM DESC LIMIT 9) AS sub ORDER BY sub.FRPM DESC LIMIT 5"
+    ground_truth_sql = "SELECT T2.MailStreet FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T1.`FRPM Count (K-12)` DESC LIMIT 1"
 
-    ground_truth_sql = "SELECT COUNT(T1.id) FROM cards AS T1 INNER JOIN foreign_data AS T2 ON T1.uuid = T2.uuid WHERE T1.borderColor = 'borderless' AND T2.language = 'Russian'"
-
-    db_name = "card_games"
+    db_name = "california_schools"
 
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+        "evaluation_technique": EvaluationTechnique.EXECUTION_ACCURACY,
         "db_params": {
             "dbms": DBMS.SQLITE,
             "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
