@@ -1,7 +1,8 @@
 import pandas as pd
 import json
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from func_timeout import func_timeout, FunctionTimedOut
+import time
 
 from src.core.database.database_handler import DBMS
 from src.core.model_manager import OpenAIModel
@@ -46,22 +47,29 @@ def evaluate_single_row(
     log_dir: str,
     embedding_model,
     timeout_seconds: int = 120,
-) -> dict:
-    def run_calculation():
-        return calculate_metrics(
-            predicted_sql, gold_sql, db_path, technique, log_dir, embedding_model
-        )
+) -> str:
+    """Evaluate a single row with func_timeout for reliable timeout handling"""
 
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_calculation)
-            return future.result(timeout=timeout_seconds)
-    except TimeoutError:
+        result = func_timeout(
+            timeout_seconds,
+            calculate_metrics,
+            args=(
+                predicted_sql,
+                gold_sql,
+                db_path,
+                technique,
+                log_dir,
+                embedding_model,
+            ),
+        )
+        return result
+    except FunctionTimedOut:
         print(f"Timeout occurred for db: {db_path} with technique: {technique.name}")
-        return None
+        return "timeout"
     except Exception as e:
-        print(f"Error evaluating db {db_path}: {str(e)}")
-        return None
+        print(f"Error for db {db_path} with technique {technique.name}: {str(e)}")
+        return "error"
 
 
 def evaluate_with_techniques(
@@ -158,13 +166,15 @@ def evaluate_with_techniques(
         print(db_path)
 
         # Evaluate each technique independently
-        row_has_any_results = False
+        # row_has_any_results = False
 
         for technique in techniques:
             technique_name = technique.name
             print(f"  Evaluating with {technique_name}...")
 
-            metrics = evaluate_single_row(
+            start_time = time.time()
+
+            result = evaluate_single_row(
                 predicted_sql=row["predicted_sql"],
                 gold_sql=row["gold_sql"],
                 db_path=db_path,
@@ -174,51 +184,75 @@ def evaluate_with_techniques(
                 timeout_seconds=timeout_seconds,
             )
 
-            # Store metrics for this technique
-            if metrics is not None:
-                df_to_evaluate.at[idx, technique_name] = json.dumps(metrics)
-                main_metric = list(metrics.values())[0] if metrics else None
+            elapsed_time = time.time() - start_time
+            print(f"    {technique_name} completed in {elapsed_time:.2f}s")
+
+            # Store result for this technique
+            if result == "timeout":
+                df_to_evaluate.at[idx, technique_name] = "timeout"
+                print(f"    {technique_name}: TIMEOUT")
+            elif result == "error":
+                df_to_evaluate.at[idx, technique_name] = "error"
+                print(f"    {technique_name}: ERROR")
+            else:
+                # Successful evaluation with metrics
+                df_to_evaluate.at[idx, technique_name] = json.dumps(result)
+                main_metric = list(result.values())[0] if result else None
                 print(f"    {technique_name} Result: {main_metric}")
-                row_has_any_results = True
-            else:
-                df_to_evaluate.at[idx, technique_name] = None
-                print(f"    {technique_name}: FAILED")
+                # row_has_any_results = True
 
-        # Save row even if some techniques failed, as long as at least one succeeded
-        if row_has_any_results:
-            # Create a single row dataframe for this evaluated row
-            evaluated_row = df_to_evaluate.loc[[idx]]
+        # Save row regardless of success/failure status
+        # Create a single row dataframe for this evaluated row
+        evaluated_row = df_to_evaluate.loc[[idx]]
 
-            # Append to existing results
-            if len(evaluated_df) > 0:
-                evaluated_df = pd.concat(
-                    [evaluated_df, evaluated_row], ignore_index=True
-                )
-            else:
-                evaluated_df = evaluated_row.copy()
-
-            # Save progress after each row (with partial results)
-            evaluated_df.to_csv(output_csv_path, index=False)
-            print(f"Row {idx + 1} evaluated and saved (partial results allowed)")
+        # Append to existing results
+        if len(evaluated_df) > 0:
+            evaluated_df = pd.concat([evaluated_df, evaluated_row], ignore_index=True)
         else:
-            print(f"Row {idx + 1} had no successful techniques, not saving")
+            evaluated_df = evaluated_row.copy()
+
+        # Save progress after each row
+        evaluated_df.to_csv(output_csv_path, index=False)
+        print(f"Row {idx + 1} evaluated and saved")
 
     print(f"Evaluation complete. Results saved to {output_csv_path}")
 
     # Print summary statistics for each technique
     print("\nSummary:")
     total_evaluated = len(evaluated_df)
-    print(f"Total rows with at least one successful technique: {total_evaluated}")
+    print(f"Total rows evaluated: {total_evaluated}")
 
     for technique in techniques:
         technique_name = technique.name
         if len(evaluated_df) > 0:
-            success_count = len(evaluated_df[evaluated_df[technique_name].notna()])
+            success_count = 0
+            timeout_count = 0
+            error_count = 0
+
+            for value in evaluated_df[technique_name]:
+                if pd.isna(value):
+                    continue
+                elif value == "timeout":
+                    timeout_count += 1
+                elif value == "error":
+                    error_count += 1
+                else:
+                    success_count += 1
+
             success_percentage = (
                 success_count / total_evaluated * 100 if total_evaluated > 0 else 0
             )
+            timeout_percentage = (
+                timeout_count / total_evaluated * 100 if total_evaluated > 0 else 0
+            )
+            error_percentage = (
+                error_count / total_evaluated * 100 if total_evaluated > 0 else 0
+            )
+
             print(
-                f"{technique_name}: {success_count} successful evaluations ({success_percentage:.2f}%)"
+                f"{technique_name}: {success_count} successful ({success_percentage:.2f}%), "
+                f"{timeout_count} timeouts ({timeout_percentage:.2f}%), "
+                f"{error_count} errors ({error_percentage:.2f}%)"
             )
 
     return evaluated_df
@@ -278,7 +312,7 @@ if __name__ == "__main__":
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
 
     timeout_seconds = 120  # Timeout for each single evaluation
-    sampling_ratio = 1  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
+    sampling_ratio = 1.0  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
     random_seed = 42  # Random seed for reproducible sampling
 
     result_df = evaluate_with_techniques(
