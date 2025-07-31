@@ -129,6 +129,7 @@ def match_rows(context: dict):
     pred_common_indices = context["pred_common_indices"]
     common_cols = context["common_cols"]
     gt_cols = context["gt_cols"]
+    pred_cols = context["pred_cols"]
 
     # Project rows to only include common columns
     gt_projected_rows = [
@@ -142,7 +143,8 @@ def match_rows(context: dict):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    p_cells = p_rows * len(common_cols)
+    # p_cells = p_rows * len(common_cols) # no penalize extra columns in predicted SQL
+    p_cells = p_rows * len(pred_cols)  # penalize extra columns in predicted SQL
 
     # Count frequencies of projected rows
     gt_counter = Counter(gt_projected_rows)
@@ -241,7 +243,7 @@ if __name__ == "__main__":
 
     # input
     predicted_sql = """
-    SELECT T3.Phone
+    SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
     FROM satscores T1 
     JOIN schools T3 ON T1.cds = T3.CDSCode 
     WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
@@ -253,7 +255,7 @@ if __name__ == "__main__":
     FROM schools AS T1 
     INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
     ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 20;
+    LIMIT 10;
     """
 
     # config
