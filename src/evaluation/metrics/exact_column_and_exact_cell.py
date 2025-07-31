@@ -129,7 +129,7 @@ def match_rows(context: dict):
     pred_common_indices = context["pred_common_indices"]
     common_cols = context["common_cols"]
     gt_cols = context["gt_cols"]
-    pred_cols = context["pred_cols"]
+    # pred_cols = context["pred_cols"]
 
     # Project rows to only include common columns
     gt_projected_rows = [
@@ -143,8 +143,7 @@ def match_rows(context: dict):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    # p_cells = p_rows * len(common_cols) # no penalize extra columns in predicted SQL
-    p_cells = p_rows * len(pred_cols)  # penalize extra columns in predicted SQL
+    p_cells = p_rows * len(common_cols)  # no penalize extra columns in predicted SQL
 
     # Count frequencies of projected rows
     gt_counter = Counter(gt_projected_rows)
