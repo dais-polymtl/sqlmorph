@@ -151,9 +151,5 @@ if __name__ == "__main__":
         ("thrombosis_prediction", 3),
         ("toxicology", 4),
     ]
-    # db_ids = [
-    #     ("european_football_2", 2),
-    #     ("debit_card_specializing", 2),
-    # ]
 
     main(db_ids)

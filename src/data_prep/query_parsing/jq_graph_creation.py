@@ -103,6 +103,12 @@ def create_jq_per_db(
         for edge, joins in edges_w_joins.items():
             jq_graph.add_edge(*edge, joins=joins)
 
+        if not nx.is_connected(jq_graph) and jq_graph.number_of_nodes() > 1:
+            logger.log(
+                "warning",
+                f"jq_graph for query {query.get('question_id', 'unknown')} in database {db_id} is not connected. Skipping.",
+            )
+            continue
         # Store graph in in-memory bucket
         jq_graph_count_by_table.setdefault(db_id, {}).setdefault(num_tables, 0)
         jq_graph_count_by_table[db_id][num_tables] += 1
@@ -148,10 +154,10 @@ def create_jq_graphs(dataset: str) -> None:
 
     interm_queries_dir = (
         Path(os.getenv("DATA_FOLDER"))
-        / "new_parsing"
-        / f"{dataset.lower()}_parsed_queries"
+        / "query_parsing"
+        / f"{dataset.lower()}_parsed_train_queries"
     )
-    output_dir = Path(os.getenv("DATA_FOLDER")) / "rule_inputs"
+    output_dir = Path(os.getenv("DATA_FOLDER")) / "rule_inputs" / "lt_elimination"
     # Process each pattern file
     for file_name in os.listdir(interm_queries_dir):
         if file_name.endswith(".json"):

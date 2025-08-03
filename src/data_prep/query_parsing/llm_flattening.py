@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import List, Dict, Tuple
 
+from query_loader import contains_nested_select_or_cte
+
 from src.core.model_manager.utils import compose_chat_messages
 from src.core.model_manager.model_manager import ModelManager, ModelProvider, ModelType
 from src.core.prompt_renderer.prompt_renderer import PromptRenderer
@@ -10,7 +12,6 @@ from src.core.database.database_handler import DBMS
 from src.evaluation import Evaluation, EvaluationTechnique
 
 from sqlglot import parse_one
-from sqlglot.expressions import Subquery, CTE
 from pathlib import Path
 import os
 
@@ -139,8 +140,8 @@ def flatten_queries_automatically(
 
         try:
             is_flat = (
-                parse_one(flattened, dialect="mysql").find(Subquery) is None
-                and parse_one(flattened, dialect="mysql").find(CTE) is None
+                contains_nested_select_or_cte(parse_one(flattened, dialect="mysql"))
+                is False
             )
         except Exception as e:
             logger.log("warning", f"Failed to parse flattened query at index {i}: {e}")

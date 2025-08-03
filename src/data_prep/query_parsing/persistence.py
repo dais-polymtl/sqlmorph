@@ -13,8 +13,8 @@ def save_non_flattened_queries(non_flattened, dataset):
         non_flattened (list): List of non-flattened queries.
         dataset (str): The name of the dataset ('Bird' or 'Beaver').
     """
-    parsing_folder = dataset.lower() + "_non_parsed_queries"
-    parsing_path = os.path.join("data", "new_parsing", parsing_folder)
+    parsing_folder = dataset.lower() + "_non_parsed_train_queries"
+    parsing_path = os.path.join("data", "query_parsing", parsing_folder)
     os.makedirs(parsing_path, exist_ok=True)
 
     output_file = os.path.join(parsing_path, "non_flattened_queries.json")
@@ -33,9 +33,9 @@ def save_interm_per_db(queries, output_file):
 
 
 def save_interm_queries(queries_per_db, dataset):
-    parsing_folder = dataset.lower() + "_parsed_queries"
+    parsing_folder = dataset.lower() + "_parsed_train_queries"
 
-    parsing_path = os.path.join("data", "new_parsing", parsing_folder)
+    parsing_path = os.path.join("data", "query_parsing", parsing_folder)
     os.makedirs(parsing_path, exist_ok=True)
 
     for db_id, queries in queries_per_db.items():

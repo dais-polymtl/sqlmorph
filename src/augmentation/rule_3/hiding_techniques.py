@@ -1,258 +1,277 @@
 import os
-
 import openai
+import json
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from typing import List, Tuple
+from src.core.model_manager.utils import compose_chat_messages
+from src.core.model_manager.model_manager import ModelManager, ModelProvider, ModelType
+from src.core.prompt_renderer.prompt_renderer import PromptRenderer
+from src.core.model_manager.openai_model import OpenAIModel
+from src.core.logger.logger import Logger
 
 load_dotenv()
+logger = Logger(name=__name__)
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 
-def apply_synonym_replacement(
-    db_id, question, evidence, sql_query, candidate_table, components
-):
-    """Uses GPT-4o to replace references to candidate tables in questions and evidence using synonyms."""
+class TokenInfo(BaseModel):
+    token: str
+    position: int
 
-    prompt = f"""
-You are in a text-to-SQL context where each question corresponds to a SQL query based on a given database schema.
 
-Your task is to conceal any direct reference to candidate table names in the question and the evidence while keeping them meaningful.  
-Use the Synonym Replacement (SR) technique to replace words or phrases linked to the table names with their synonyms.  
+def replace_tokens_in_text(
+    original_text: str, new_tokens: List[Tuple[str, int]]
+) -> str:
+    text = list(original_text)  # Convert to list for mutable string
 
-**Guidelines:**
-- The synonym should not refer to the candidate table itself (e.g., if the table is *cards*, do not use *playing cards*).
-- Keep the meaning of the question and evidence intact.
-- If the evidence directly mentions a table (e.g., cards.name), replace the table name with a synonym and imply the source with pronouns or descriptive phrases.
-- If the evidence is empty, return an empty string.
-- The **Candidate Table** may be a single word (e.g., *users*) or a compound name (e.g., *postHistory*).  
-- You will be given **Components**, a list of parts of the candidate table name. Use them to identify what to replace.
-- Do **not** mention the original table name in any way.
+    # Sort by position in reverse to avoid shifting indices
+    for new_token, pos in sorted(new_tokens, key=lambda x: -x[1]):
+        end = pos
+        while end < len(text) and text[end].isalnum():
+            end += 1
 
-**Input:**
-- **Database ID:** {db_id}
-- **Question:** {question}
-- **Evidence:** {evidence}
-- **SQL Query:** {sql_query}
-- **Candidate Table:** {candidate_table}
-- **Components:** {components}
+        # Replace characters
+        text[pos:end] = list(new_token)
 
-**Output Format:**  
-New Question: modified question  
-New Evidence: modified evidence (or empty string if none)
-"""
+    return "".join(text)
 
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt},
+
+def _generate_response(prompt_key, prompt_args, model_args=None):
+    prompt = [
+        PromptRenderer(
+            os.path.join(os.path.dirname(__file__), "prompt_templates")
+        ).render(prompt_key, prompt_args)
     ]
-
-    response = openai.chat.completions.create(
-        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
+    messages = compose_chat_messages(user_messages=prompt)
+    model = ModelManager.create_model(
+        model_provider=ModelProvider.OPENAI,
+        model_type=ModelType.COMPLETION,
+        model_name=OpenAIModel.GPT_4O,
+        openai_api_key=os.environ["OPENAI_API_KEY"],
     )
+    response = model.get_chat_completion(
+        messages=messages,
+        max_tokens=3000,
+        temperature=0.7,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0,
+        response_format=model_args.get("response_format", None),
+    )
+    generated_text = response["completion_content"][0].strip()
 
-    generated_text = response.choices[0].message.content.strip()
-
-    # Extract new question and evidence
-    new_question, new_evidence = "", ""
-    for row in generated_text.split("\n"):
-        if row.startswith("New Question:"):
-            new_question = row.replace("New Question: ", "").strip()
-        elif row.startswith("New Evidence:"):
-            new_evidence = row.replace("New Evidence: ", "").strip()
-
-    return new_question, new_evidence
+    return generated_text
 
 
-def generate_synonym_replacement_queries(jqgs):
+def hide_tables_with_synonym_replacement(jqgs):
     """Processes queries by applying synonym replacement and filtering unchanged ones."""
 
-    rewritten_queries = []
+    def process_components(components, table_name, db_id):
+        result = []
+        for comp in components:
+            new_tokens = _generate_response(
+                prompt_key="synonym_replacement",
+                prompt_args={
+                    "tokens": comp["matched_tokens"],
+                    "table_name": table_name,
+                    "db_id": db_id,
+                },
+                model_args={
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "Test",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "response": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "token": {"type": "string"},
+                                                "position": {"type": "integer"},
+                                            },
+                                            "required": ["token", "position"],
+                                            "additionalProperties": False,
+                                        },
+                                    }
+                                },
+                                "required": ["response"],
+                                "additionalProperties": False,
+                            },
+                            "strict": True,
+                        },
+                    }
+                },
+            )
+            comp_copy = comp.copy()
+            comp_copy["new_matched_tokens"] = json.loads(new_tokens).get("response", [])
+            result.append(comp_copy)
+        return result
 
-    for jqg in jqgs:
-        new_question, new_evidence = apply_synonym_replacement(
-            jqg["db_id"],
-            jqg["question"],
-            jqg["evidence"],
-            jqg["SQL"],
-            jqg["central_table"],
-            jqg["components"],
+    rewritten_queries = []
+    logger.log(
+        level="info",
+        action="hide_tables_with_synonym_replacement",
+        details={"num_queries": len(jqgs), "technique": "synonym_replacement"},
+    )
+
+    for i, jqg in enumerate(jqgs):
+        jqg_copy = jqg.copy()
+        logger.log(
+            level="debug",
+            action=f"Processing query {i + 1}/{len(jqgs)}: using synonym replacement",
         )
 
-        if not any(comp in new_question.lower() for comp in jqg["components"]):
-            jqg["new_question"], jqg["new_evidence"] = (
-                new_question,
-                new_evidence,
-            )
-            rewritten_queries.append(jqg)
+        q_comps = process_components(
+            jqg["question_components"], jqg["central_table"], jqg["db_id"]
+        )
+        e_comps = process_components(
+            jqg.get("evidence_components", []), jqg["central_table"], jqg["db_id"]
+        )
+
+        jqg_copy["new_question"] = replace_tokens_in_text(
+            jqg["question"],
+            [
+                (t["token"], int(t["position"]))
+                for c in q_comps
+                for t in c["new_matched_tokens"]
+            ],
+        )
+        jqg_copy["new_evidence"] = replace_tokens_in_text(
+            jqg["evidence"],
+            [
+                (t["token"], int(t["position"]))
+                for c in e_comps
+                for t in c["new_matched_tokens"]
+            ],
+        )
+        rewritten_queries.append(jqg_copy)
 
     return rewritten_queries
 
 
-def hide_tables_with_synonym_replacement(data):
-    return generate_synonym_replacement_queries(data)
-
-
-def apply_backtranslation(
-    db_id, question, evidence, sql_query, candidate_table, components
-):
-    """Uses GPT-4o to perform back translation with synonym replacement."""
-
-    prompt = f"""
-You are in a text-to-SQL context where each question corresponds to a SQL query based on a given database schema.
-
-Your task is to conceal any direct reference to the candidate table names in the question and the evidence while keeping it meaningful.  
-Use the **Back Translation (BT)** technique. First, translate the question and the evidence into French, then back to English. During the French translation, replace any reference to the candidate table with a relevant synonym.  
-
-**Important Guidelines:**
-- Do not use synonyms that refer directly to the candidate table (e.g., if the table is *cards*, do not use *cartes de jeu*).  
-- Hide only the table name reference and keep the rest of the question and evidence intact.  
-- If the evidence directly mentions a table name (e.g., cards.name), replace the table name with a suitable synonym and imply the source with pronouns or descriptive phrases.
-- If the evidence is empty, return an empty string.
-- The **Candidate Table** may be a single word (e.g., *users*) or a compound name (e.g., *postHistory*).  
-- The **Components** list helps identify which words to replace.
-
-**Input:**
-- **Database ID:** {db_id}
-- **Question:** {question}
-- **Evidence:** {evidence}
-- **SQL Query:** {sql_query}
-- **Candidate Table:** {candidate_table}
-- **Components:** {components}
-
-**Output Format:**  
-Question in English: [modified question]  
-Evidence in English: [modified evidence] (or empty string if none)
-"""
-
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt},
-    ]
-
-    response = openai.chat.completions.create(
-        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
-    )
-
-    generated_text = response.choices[0].message.content.strip()
-
-    # Extract new question and evidence
-    new_question, new_evidence = "", ""
-    for row in generated_text.split("\n"):
-        if row.startswith("Question in English:"):
-            new_question = row.replace("Question in English: ", "").strip()
-        elif row.startswith("Evidence in English:"):
-            new_evidence = row.replace("Evidence in English: ", "").strip()
-
-    return new_question, new_evidence
-
-
-def generate_backtranslated_queries(jqgs):
+def hide_tables_with_backtranslation(jqgs):
     """Processes queries by applying back translation and filtering unchanged ones."""
 
     rewritten_queries = []
+    logger.log(
+        level="info",
+        action="hide_tables_with_backtranslation",
+        details={"num_queries": len(jqgs), "technique": "backtranslation"},
+    )
 
-    for jqg in jqgs:
-        new_question, new_evidence = apply_backtranslation(
-            jqg["db_id"],
-            jqg["question"],
-            jqg["evidence"],
-            jqg["SQL"],
-            jqg["central_table"],
-            jqg["components"],
+    for i, jqg in enumerate(jqgs):
+        jqg_copy = jqg.copy()
+        logger.log(
+            level="debug",
+            action=f"Processing query {i + 1}/{len(jqgs)}: using backtranslation",
         )
-        # Ensure replacement occurred before keeping it
-        if not any(comp in new_question.lower() for comp in jqg["components"]):
-            jqg["new_question"], jqg["new_evidence"] = (
-                new_question,
-                new_evidence,
-            )
-            rewritten_queries.append(jqg)
+
+        common_args = {
+            "db_id": jqg["db_id"],
+            "sql_query": jqg["SQL"],
+            "candidate_table": jqg["central_table"],
+        }
+
+        new_question = _generate_response(
+            prompt_key="backtranslation",
+            prompt_args={
+                **common_args,
+                "source": jqg["question"],
+                "components": jqg["question_components"],
+                "source_type": "question",
+            },
+            model_args={"response_format": {"type": "text"}},
+        )
+
+        new_evidence = _generate_response(
+            prompt_key="backtranslation",
+            prompt_args={
+                **common_args,
+                "source": jqg["evidence"],
+                "components": jqg.get("evidence_components", []),
+                "source_type": "evidence",
+                "new_question": new_question,
+            },
+            model_args={"response_format": {"type": "text"}},
+        )
+
+        jqg_copy["new_question"] = (
+            new_question.replace("New question:", "")
+            .replace("Rewritten question:", "")
+            .strip()
+        )
+        jqg_copy["new_evidence"] = (
+            new_evidence.replace("New evidence:", "")
+            .replace("Rewritten evidence:", "")
+            .strip()
+        )
+        rewritten_queries.append(jqg_copy)
 
     return rewritten_queries
 
 
-def hide_tables_with_backtranslation(data):
-    return generate_backtranslated_queries(data)
-
-
-def augment_with_contextual_synonyms(
-    db_id, question, evidence, sql_query, candidate_table, components
-):
-    """Uses GPT-4o to perform contextual augmentation by replacing table references with synonyms."""
-
-    prompt = f"""
-You are in a text-to-SQL context where each question corresponds to a SQL query based on a given database schema.
-
-Your task is to conceal any direct reference to the candidate table names in the question and evidence while ensuring the sentence remains meaningful.  
-Use **Contextual Augmentation (CA)** to replace words or phrases related to the table names with appropriate synonyms that fit naturally within the surrounding context.  
-
-**Guidelines:**  
-- Synonyms must be relevant to the database context (e.g., for *card_games*, *cards* could become *playing pieces* but not *vouchers*).  
-- Synonyms should not directly reference the candidate table (e.g., *cards* should not become *playing cards*).  
-- Ensure the table name is removed while keeping the question intact.  
-- If the evidence contains a table name along with a column (e.g., cards.name), replace the table name and use pronouns or descriptive phrases to imply the source.
-- If the evidence is empty, return an empty string.
-
-**Input:**  
-- **Database ID:** {db_id}  
-- **Question:** {question}  
-- **Evidence:** {evidence}  
-- **SQL Query:** {sql_query}  
-- **Candidate Table:** {candidate_table}  
-- **Components:** {components}  
-
-**Output Format:**  
-New Question: [modified question]  
-New Evidence: [modified evidence] (or empty string if none)
-"""
-
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt},
-    ]
-
-    response = openai.chat.completions.create(
-        model="gpt-4o", messages=messages, max_tokens=300, temperature=0.7
-    )
-
-    generated_text = response.choices[0].message.content.strip()
-
-    # Extract new question and evidence
-    new_question, new_evidence = "", ""
-    for row in generated_text.split("\n"):
-        if row.startswith("New Question:"):
-            new_question = row.replace("New Question: ", "").strip()
-        elif row.startswith("New Evidence:"):
-            new_evidence = row.replace("New Evidence: ", "").strip()
-
-    return new_question, new_evidence
-
-
-def generate_contextually_augmented_queries(jqgs):
+def hide_tables_with_contextual_augmentation(jqgs):
     """Processes queries by applying contextual augmentation and filtering unchanged ones."""
 
     rewritten_queries = []
+    logger.log(
+        level="info",
+        action="hide_tables_with_contextual_augmentation",
+        details={"num_queries": len(jqgs), "technique": "contextual_augmentation"},
+    )
 
-    for jqg in jqgs:
-        new_question, new_evidence = augment_with_contextual_synonyms(
-            jqg["db_id"],
-            jqg["question"],
-            jqg["evidence"],
-            jqg["SQL"],
-            jqg["central_table"],
-            jqg["components"],
+    for i, jqg in enumerate(jqgs):
+        jqg_copy = jqg.copy()
+        logger.log(
+            level="debug",
+            action=f"Processing query {i + 1}/{len(jqgs)} for contextual augmentation",
         )
 
-        # Ensure replacement occurred before keeping it
-        if not any(comp in new_question.lower() for comp in jqg["components"]):
-            jqg["new_question"], jqg["new_evidence"] = (
-                new_question,
-                new_evidence,
-            )
-            rewritten_queries.append(jqg)
+        common_args = {
+            "db_id": jqg["db_id"],
+            "sql_query": jqg["SQL"],
+            "candidate_table": jqg["central_table"],
+        }
+        model_args = {"response_format": {"type": "text"}}
+
+        new_question = _generate_response(
+            prompt_key="contextual_augmentation",
+            prompt_args={
+                **common_args,
+                "source": jqg["question"],
+                "components": jqg["question_components"],
+                "source_type": "question",
+            },
+            model_args=model_args,
+        )
+
+        new_evidence = _generate_response(
+            prompt_key="contextual_augmentation",
+            prompt_args={
+                **common_args,
+                "source": jqg["evidence"],
+                "components": jqg.get("evidence_components", []),
+                "source_type": "evidence",
+                "new_question": new_question,
+            },
+            model_args=model_args,
+        )
+
+        jqg_copy["new_question"] = (
+            new_question.replace("New question:", "")
+            .replace("Rewritten question:", "")
+            .strip()
+        )
+        jqg_copy["new_evidence"] = (
+            new_evidence.replace("New evidence:", "")
+            .replace("Rewritten evidence:", "")
+            .strip()
+        )
+        rewritten_queries.append(jqg_copy)
 
     return rewritten_queries
-
-
-def hide_tables_with_contextual_augmentation(data):
-    return generate_contextually_augmented_queries(data)

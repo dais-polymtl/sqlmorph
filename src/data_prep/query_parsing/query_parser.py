@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple, List
 import sqlparse
 from sqlglot import parse_one
 import sqlglot.expressions as exp
@@ -83,7 +83,15 @@ def extract_joins(token_list) -> List[Comparison]:
     Returns:
         List[Comparison]: A list of join conditions.
     """
-    join_pattern = re.compile(r"\b(\w+\.\w+)\s*=\s*(\w+\.\w+)\b", re.IGNORECASE)
+    join_pattern = re.compile(
+        r"""^\s*         # optional leading spaces
+        (\w+\.`[^`]+`|\w+\.\w+)    # table.column (supports backticks)
+        \s*=\s*      # equals with optional spaces
+        (\w+\.`[^`]+`|\w+\.\w+)    # table.column (supports backticks)
+        \s*$         # optional trailing spaces
+    """,
+        re.IGNORECASE | re.VERBOSE,
+    )
     join_conditions = []
     for token in token_list:
         if isinstance(token, Comparison):
@@ -130,33 +138,8 @@ def parse_queries(
             join_conditions_with_aliases, aliases_to_table_map
         )
 
-        # seen_tables = set()
-        # unique_tables = []
-        # for table in tables:
-        #     table_name = table["table_name"]
-        #     if table_name not in seen_tables:
-        #         seen_tables.add(table_name)
-        #         unique_tables.append(
-        #             {"table_name": table_name, "table_alias": table["table_alias"]}
-        #         )
-
-        # seen_joins = set()
-        # deduplicated_join_conditions = []
-        # for condition in join_conditions_without_aliases:
-        #     left_side, right_side = map(str.strip, condition.split("="))
-        #     table1, column1 = map(str.strip, left_side.split("."))
-        #     table2, column2 = map(str.strip, right_side.split("."))
-
-        #     if table1 != table2:
-        #         join_pair = frozenset([(table1, column1), (table2, column2)])
-        #         if join_pair not in seen_joins:
-        #             seen_joins.add(join_pair)
-        #             deduplicated_join_conditions.append(
-        #                 f"{table1}.{column1} = {table2}.{column2}"
-        #             )
-
         parsed_data = {
-            "question_id": query.get("question_id", "") or f"query_{i}",
+            "question_id": query.get("question_id", "") or i,
             "db_id": query.get("db_id", ""),
             "SQL": query.get("SQL", "") or query.get("sql", ""),
             "question": query.get("question", ""),
