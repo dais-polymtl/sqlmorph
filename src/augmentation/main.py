@@ -1,6 +1,8 @@
 import os
 import sys
+import pickle
 from dotenv import load_dotenv
+from pathlib import Path
 
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -8,15 +10,13 @@ from src.core.logger.logger import Logger
 
 
 from rule_3 import (
-    retrieve_all_dev_patterns as r3_retrieve_all_dev_patterns,
-    split_queries,
+    retrieve_jqgs,
+    compute_node_distribution_per_db,
+    cluster_db_ids_by_node_dist,
+    split_cluster_jqgs,
     process_dataset,
-    hide_tables_with_synonym_replacement,
-    hide_tables_with_backtranslation,
-    hide_tables_with_contextual_augmentation,
-    process_and_save_data_for_set,
+    visualize_clusters,
 )
-from rule_3.utils import set_random_seed
 
 logger = Logger(__name__)
 load_dotenv()
@@ -25,132 +25,252 @@ load_dotenv()
 def run_rule_3():
     print("Starting Rule 3: Hiding Path Information")
 
-    # Configuration
-    data_folder = "data/"
-    rule_inputs_base = os.path.join(data_folder, "rule_inputs")
+    data_folder = Path(os.getenv("DATA_FOLDER"))
+    rule_inputs_base = data_folder / "rule_inputs" / "lt_elimination"
+    output_base_dir = data_folder / "rule_outputs" / "lt_elimination"
 
-    # Define database IDs
-    db_ids = [
-        "california_schools",
-        "card_games",
-        "codebase_community",
-        "debit_card_specializing",
-        "european_football_2",
-        "financial",
-        "formula_1",
-        "student_club",
-        "superhero",
-        "thrombosis_prediction",
-        "toxicology",
+    db_ids = [f.name for f in rule_inputs_base.iterdir() if f.is_dir()]
+    logger.log("info", f"Found {len(db_ids)} databases in rule inputs.")
+    for split in ["train", "dev", "test"]:
+        os.makedirs(output_base_dir / split, exist_ok=True)
+
+    # Load and process dataset
+    database_jqgs = [
+        jqg for db in db_ids for jqg in retrieve_jqgs(rule_inputs_base / db)
     ]
-    # Set up output directories
-    output_base_dir = os.path.join(data_folder, "rule_outputs", "lt_elimination")
-    train_output_base_dir = os.path.join(output_base_dir, "train")
-    dev_output_base_dir = os.path.join(output_base_dir, "dev")
-    test_output_base_dir = os.path.join(output_base_dir, "test")
+    database_jqgs_with_lt = process_dataset(database_jqgs)
 
-    for dir_path in [
-        output_base_dir,
-        train_output_base_dir,
-        dev_output_base_dir,
-        test_output_base_dir,
-    ]:
-        os.makedirs(dir_path, exist_ok=True)
+    logger.log(
+        "info", f"Loaded {len(database_jqgs)} queries with possible link tables."
+    )
+    logger.log(
+        "info", f"Processed {len(database_jqgs_with_lt)} queries with link tables."
+    )
 
-    print(f"Processing {len(db_ids)} databases...")
-
-    # Load database subgraphs
-    database_jqgs = []
-    for db_id in db_ids:
-        database_jqgs.extend(
-            r3_retrieve_all_dev_patterns(os.path.join(rule_inputs_base, db_id))
-        )
-        print(
-            f"Loaded {len(database_jqgs)} queries and join query graphs for database: {db_id}"
+    # Cluster and split
+    db_node_dist = compute_node_distribution_per_db(database_jqgs_with_lt)
+    clustered_db_ids = cluster_db_ids_by_node_dist(db_node_dist, n_clusters=2)
+    for cid, ids in clustered_db_ids.items():
+        logger.log("info", f"Cluster {cid} contains {len(ids)} databases.")
+        visualize_clusters(
+            db_node_dist=db_node_dist,
+            clustered=clustered_db_ids,
+            output_path=output_base_dir / f"clusters_{cid}.png",
         )
 
-    # Split queries into train, dev, and test sets
-    set_random_seed(42)  # Ensuring reproducibility
-    train_jqgs, dev_jqgs, test_jqgs = split_queries(database_jqgs)
+    largest_cluster = max(clustered_db_ids, key=lambda cid: len(clustered_db_ids[cid]))
 
-    print(f"Train: {len(train_jqgs)} queries and join query graphs.")
-    print(f"Dev: {len(dev_jqgs)} queries and join query graphs")
-    print(f"Test: {len(test_jqgs)} queries and join query graphs")
-
-    # Process datasets to identify central tables
-    print("Processing datasets to identify central tables...")
-    train_jqgs_w_lt = process_dataset(train_jqgs)
-    dev_jqgs_w_lt = process_dataset(dev_jqgs)
-    test_jqgs_w_lt = process_dataset(test_jqgs)
-
-    # Apply hiding techniques to train and dev sets
-    print("Applying hiding techniques to train and dev sets...")
-
-    # Synonym Replacement
-    print("Applying Synonym Replacement...")
-    print("Number of queries with central tables in train set:", len(train_jqgs_w_lt))
-    print("Number of queries with central tables in dev set:", len(dev_jqgs_w_lt))
-    print("Number of queries with central tables in test set:", len(test_jqgs_w_lt))
-    train_queries_with_synonym_replacement = hide_tables_with_synonym_replacement(
-        train_jqgs_w_lt
-    )
-    dev_queries_with_synonym_replacement = hide_tables_with_synonym_replacement(
-        dev_jqgs_w_lt
+    train_set, dev_set, test_set = split_cluster_jqgs(
+        database_jqgs_with_lt,
+        clustered_db_ids[largest_cluster],
+        test_size=100,
+        dev_ratio=0.2,
+        seed=35,
     )
 
-    # Back Translation
-    print("Applying Back Translation...")
-    train_queries_with_backtranslation = hide_tables_with_backtranslation(
-        train_jqgs_w_lt
-    )
-    dev_queries_with_backtranslation = hide_tables_with_backtranslation(dev_jqgs_w_lt)
-
-    # Contextual Augmentation
-    print("Applying Contextual Augmentation...")
-    train_queries_with_contextual_augmentation = (
-        hide_tables_with_contextual_augmentation(train_jqgs_w_lt)
-    )
-    dev_queries_with_contextual_augmentation = hide_tables_with_contextual_augmentation(
-        dev_jqgs_w_lt
-    )
-
-    # Save the train and dev data
-    print("Saving train and dev data...")
-
-    train_data = {
-        "synonym_replacement": train_queries_with_synonym_replacement,
-        "backtranslation": train_queries_with_backtranslation,
-        "contextual_augmentation": train_queries_with_contextual_augmentation,
-    }
-
-    dev_data = {
-        "synonym_replacement": dev_queries_with_synonym_replacement,
-        "backtranslation": dev_queries_with_backtranslation,
-        "contextual_augmentation": dev_queries_with_contextual_augmentation,
-    }
-
-    process_and_save_data_for_set(train_data, train_output_base_dir)
-    process_and_save_data_for_set(dev_data, dev_output_base_dir)
-
-    # Now generate and save data for the test set
-    print("Generating and saving data for the test set...")
-    test_queries_with_synonym_replacement = hide_tables_with_synonym_replacement(
-        test_jqgs_w_lt
-    )
-    test_queries_with_backtranslation = hide_tables_with_backtranslation(test_jqgs_w_lt)
-    test_queries_with_contextual_augmentation = (
-        hide_tables_with_contextual_augmentation(test_jqgs_w_lt)
+    # We will try to save the train, dev and test sets in pickle files under the output directory
+    for split in ["train", "dev", "test"]:
+        folder_path = output_base_dir / split
+        os.makedirs(folder_path, exist_ok=True)
+        file_path = folder_path / f"{split}_jqgs_with_lt.pkl"
+        if split == "train":
+            data_to_save = train_set
+        elif split == "dev":
+            data_to_save = dev_set
+        elif split == "test":
+            data_to_save = test_set
+        else:
+            raise ValueError(f"Unknown split: {split}")
+        with open(file_path, "wb") as f:
+            pickle.dump(data_to_save, f)
+    logger.log(
+        "info",
+        f"Saved {len(train_set)} train, {len(dev_set)} dev, and {len(test_set)} test sets to {output_base_dir}.",
     )
 
-    test_data = {
-        "synonym_replacement": test_queries_with_synonym_replacement,
-        "backtranslation": test_queries_with_backtranslation,
-        "contextual_augmentation": test_queries_with_contextual_augmentation,
-    }
+    # np.random.seed(35)
+    # np.random.shuffle(train_set)
+    # np.random.shuffle(dev_set)
+    # np.random.shuffle(test_set)
+    # test_set = test_set[:3]
 
-    process_and_save_data_for_set(test_data, test_output_base_dir)
+    # sampled_train_set = train_set[:50]  # Sampled for demonstration
+    # # dev_set = dev_set[:20]  # Sampled for demonstration
 
-    print("Rule 3 processing complete!")
+    # train_sr = hide_tables_with_synonym_replacement(sampled_train_set)
+    # train_bt = hide_tables_with_backtranslation(sampled_train_set)
+    # train_ca = hide_tables_with_contextual_augmentation(sampled_train_set)
+
+    # dev_sr = hide_tables_with_synonym_replacement(dev_set)
+    # dev_bt = hide_tables_with_backtranslation(dev_set)
+    # dev_ca = hide_tables_with_contextual_augmentation(dev_set)
+
+    # test_sr = hide_tables_with_synonym_replacement(test_set)
+    # test_bt = hide_tables_with_backtranslation(test_set)
+    # test_ca = hide_tables_with_contextual_augmentation(test_set)
+
+    # train_sr_results = hiding_success_scores(train_sr)
+    # train_bt_results = hiding_success_scores(train_bt)
+    # train_ca_results = hiding_success_scores(train_ca)
+    # # scores
+    # sr_results = hiding_success_scores(dev_sr)
+    # bt_results = hiding_success_scores(dev_bt)
+    # ca_results = hiding_success_scores(dev_ca)
+
+    # test_sr_results = hiding_success_scores(test_sr)
+    # test_bt_results = hiding_success_scores(test_bt)
+    # test_ca_results = hiding_success_scores(test_ca)
+
+    # train_data = {
+    #     "syn_rep": train_sr_results["queries_w_scores"],
+    #     "backtrans": train_bt_results["queries_w_scores"],
+    #     "context_aug": train_ca_results["queries_w_scores"]
+    # }
+
+    # dev_data = {
+    #     "syn_rep": sr_results["queries_w_scores"],
+    #     "backtrans": bt_results["queries_w_scores"],
+    #     "context_aug": ca_results["queries_w_scores"]
+    # }
+
+    # test_data = {
+    #     "syn_rep": test_sr_results["queries_w_scores"],
+    #     "backtrans": test_bt_results["queries_w_scores"],
+    #     "context_aug": test_ca_results["queries_w_scores"]
+    # }
+    # print results for training set
+    # print("\nTraining Set Hiding Success Scores:")
+    # headers = [
+    #     "Technique",
+    #     "Q Score",
+    #     "E Score",
+    # ]
+    # table = []
+    # table.append([
+    #     "Synonym Replacement",
+    #     round(train_sr_results["averages"]["question_score"], 3),
+    #     round(train_sr_results["averages"]["evidence_score"], 3),
+    # ])
+    # table.append([
+    #     "Backtranslation",
+    #     round(train_bt_results["averages"]["question_score"], 3),
+    #     round(train_bt_results["averages"]["evidence_score"], 3),
+    # ])
+    # table.append([
+    #     "Contextual Augmentation",
+    #     round(train_ca_results["averages"]["question_score"], 3),
+    #     round(train_ca_results["averages"]["evidence_score"], 3),
+    # ])
+    # print(tabulate(table, headers=headers, tablefmt="grid"))
+
+    # # Let's print the results in a table format
+    # print("\nHiding Success Scores:")
+    # headers = [
+    #     "Technique",
+    #     "Q Score",
+    #     "E Score",
+    # ]
+    # table = []
+    # table.append([
+    #     "Synonym Replacement",
+    #     round(sr_results["averages"]["question_score"], 3),
+    #     round(sr_results["averages"]["evidence_score"], 3),
+    # ])
+    # table.append([
+    #     "Backtranslation",
+    #     round(bt_results["averages"]["question_score"], 3),
+    #     round(bt_results["averages"]["evidence_score"], 3),
+    # ])
+    # table.append([
+    #     "Contextual Augmentation",
+    #     round(ca_results["averages"]["question_score"], 3),
+    #     round(ca_results["averages"]["evidence_score"], 3),
+    # ])
+
+    # print(tabulate(table, headers=headers, tablefmt="grid"))
+    # print("\nTest Set Hiding Success Scores:")
+    # headers = [
+    #     "Technique",
+    #     "Q Score",
+    #     "E Score",
+    # ]
+
+    # table = []
+    # table.append([
+    #     "Synonym Replacement",
+    #     round(test_sr_results["averages"].get("question_score") or 0.0, 3) if test_sr_results["averages"].get("question_score") is not None else "N/A",
+    #     round(test_sr_results["averages"].get("evidence_score") or 0.0, 3) if test_sr_results["averages"].get("evidence_score") is not None else "N/A",
+    # ])
+    # table.append([
+    #     "Backtranslation",
+    #     round(test_bt_results["averages"].get("question_score") or 0.0, 3) if test_bt_results["averages"].get("question_score") is not None else "N/A",
+    #     round(test_bt_results["averages"].get("evidence_score") or 0.0, 3) if test_bt_results["averages"].get("evidence_score") is not None else "N/A",
+    # ])
+    # table.append([
+    #     "Contextual Augmentation",
+    #     round(test_ca_results["averages"].get("question_score") or 0.0, 3) if test_ca_results["averages"].get("question_score") is not None else "N/A",
+    #     round(test_ca_results["averages"].get("evidence_score") or 0.0, 3) if test_ca_results["averages"].get("evidence_score") is not None else "N/A",
+    # ])
+
+    # print(tabulate(table, headers=headers, tablefmt="grid"))
+
+    # def run_augment_and_score(dataset, name):
+    #     data, scores = {}, {}
+    #     for key, func in techniques.items():
+    #         queries_copy = [q.copy() for q in dataset]
+    #         queries = func(queries_copy)
+    #         result = hiding_success_scores(queries)
+    #         data[key] = result["queries"]
+    #         scores[key] = {
+    #             "averages": result["averages"]
+    #         }
+    #     return data, scores
+
+    # train_data, train_scores = run_augment_and_score(train_set, "train")
+    # dev_data, dev_scores = run_augment_and_score(dev_set, "dev")
+
+    # # Pretty print scores
+    # def print_scores(title, score_dict):
+    #     print(f"\nHiding Success Scores for {title.capitalize()} Set:")
+
+    #     headers = [
+    #         "Technique",
+    #         "Q Strict",
+    #         "Q Relaxed",
+    #         "E Strict",
+    #         "E Relaxed"
+    #     ]
+    #     label_map = {
+    #         "syn_rep": "Synonym Replacement",
+    #         "backtrans": "Backtranslation",
+    #         "context_aug": "Contextual Augmentation"
+    #     }
+
+    #     table = []
+    #     for tech_key, tech_scores in score_dict.items():
+    #         scores = tech_scores["averages"]
+    #         label = label_map.get(tech_key, tech_key.capitalize())
+    #         row = [
+    #             label,
+    #             round(scores["question_strict_score"], 3),
+    #             round(scores["question_relaxed_score"], 3),
+    #             round(scores["evidence_strict_score"], 3),
+    #             round(scores["evidence_relaxed_score"], 3)
+    #         ]
+    #         table.append(row)
+
+    #     print(tabulate(table, headers=headers, tablefmt="grid"))
+    # print_scores("training", train_scores)
+    # print_scores("development", dev_scores)
+
+    # # # Now we will do test set augmentation
+    # test_data, test_scores = run_augment_and_score(test_set, "test")
+    # print_scores("test", test_scores)
+
+    # # Save results
+    # process_and_save_data_for_set(train_data, output_base_dir / "train", "train")
+    # process_and_save_data_for_set(dev_data, output_base_dir / "dev", "dev")
+    # process_and_save_data_for_set(test_data, output_base_dir / "test", "test")
 
 
 if __name__ == "__main__":

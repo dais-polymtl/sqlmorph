@@ -2,8 +2,8 @@ from __future__ import annotations
 from typing import List, Dict, Tuple
 
 from llm_flattening import compare_queries
+from query_loader import contains_nested_select_or_cte
 from sqlglot import parse_one
-from sqlglot.expressions import Subquery, CTE
 
 import os
 import json
@@ -68,9 +68,9 @@ def flatten_queries_manually(
                 break
 
             try:
-                if parse_one(user_query, dialect="mysql").find(Subquery) and parse_one(
-                    user_query, dialect="mysql"
-                ).find(CTE):
+                if contains_nested_select_or_cte(
+                    parse_one(user_query, dialect="mysql")
+                ):
                     print("❌ Your query still appears to be nested. Please try again.")
                     continue
             except Exception as e:
