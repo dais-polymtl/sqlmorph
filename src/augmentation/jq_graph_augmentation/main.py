@@ -7,13 +7,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.core.logger.logger import Logger
 
 
-from sql_query_gen import (
+from .sql_query_gen import (
     aug_n_table_sql_queries,
 )
-from nl_query_gen import (
+from .nl_query_gen import (
     gen_nl,
 )
-from persistence import (
+from .persistence import (
     save_graph_first,
     save_query_first,
 )
@@ -33,7 +33,7 @@ def store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=False):
 
 
 def main(args):
-    filtered_aug, discarded_aug = aug_n_table_sql_queries(
+    filtered_aug, discarded_aug, _ = aug_n_table_sql_queries(
         db_id=args.db_id,
         num_tables=args.num_tables,
         graph_first=args.graph_first,

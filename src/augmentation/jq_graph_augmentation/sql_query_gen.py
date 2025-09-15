@@ -639,12 +639,14 @@ def aug_n_table_sql_queries(db_id, num_tables, graph_first=False):
     graph_data_base = os.getenv("GRAPH_DATA_BASE")
     data_folder = os.getenv("DATA_FOLDER")
 
-    aug_inputs_path = os.path.join(rule_inputs_base, db_id)
+    aug_inputs_path = os.path.join(rule_inputs_base, "jq_augmentation", db_id)
     schema_path = os.path.join(graph_data_base, f"{db_id}_graph.pkl")
     db_file_path = os.path.join(
         data_folder, "benchmarks", "Bird", "bird_databases", db_id, f"{db_id}.sqlite"
     )
-    query_stats_path = os.path.join(rule_inputs_base, "query_statistics.csv")
+    query_stats_path = os.path.join(
+        rule_inputs_base, "jq_augmentation", "query_statistics.csv"
+    )
 
     # Check that all necessary files exist
     validate_paths(aug_inputs_path, schema_path, db_file_path, query_stats_path)
