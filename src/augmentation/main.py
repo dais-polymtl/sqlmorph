@@ -1,6 +1,5 @@
 import os
 import sys
-import pickle
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np

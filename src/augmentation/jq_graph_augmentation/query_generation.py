@@ -259,7 +259,17 @@ def extend_old_query(jqg: Dict[str, Any], extended_graph: nx.Graph) -> Dict[str,
 
     jqg_copy = jqg.copy()
     old_query = jqg_copy.get("flattened_query") or jqg_copy.get("SQL")
-    added_table = next((n for n in extended_graph.nodes if n[1] == "et"), None)
+    # print("extended graph nodes: ", extended_graph.nodes(data=True))
+    # added_table = next((n for n in extended_graph.nodes if n["color"] == "red"), None)
+    added_table = next(
+        (
+            n
+            for n, data in extended_graph.nodes(data=True)
+            if data.get("color") == "red"
+        ),
+        None,
+    )
+    print("added_table: ", added_table)
 
     added_joins = sum(
         (

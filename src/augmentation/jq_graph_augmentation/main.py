@@ -33,20 +33,20 @@ def store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=False):
 
 
 def main(args):
-    filtered_aug, discarded_aug, _ = aug_n_table_sql_queries(
+    filtered_aug, discarded_aug, all_extensions = aug_n_table_sql_queries(
         db_id=args.db_id,
         num_tables=args.num_tables,
         graph_first=args.graph_first,
     )
-    filtered_aug = gen_nl(
-        filtered_aug,
-        graph_first=args.graph_first,
-    )
-    discarded_aug = gen_nl(
-        discarded_aug,
-        graph_first=args.graph_first,
-    )
-    store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=args.graph_first)
+    # filtered_aug = gen_nl(
+    #     filtered_aug,
+    #     graph_first=args.graph_first,
+    # )
+    # discarded_aug = gen_nl(
+    #     discarded_aug,
+    #     graph_first=args.graph_first,
+    # )
+    # store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=args.graph_first)
 
 
 def str2bool(v):

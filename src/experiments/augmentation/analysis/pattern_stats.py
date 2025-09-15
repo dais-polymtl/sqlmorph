@@ -159,9 +159,9 @@ def save_results(results: List[List], output_filename: str) -> None:
 
 
 def main() -> None:
-    pattern_dir = ""
-    graph_dir = ""
-    output_file = ""
+    pattern_dir = "data/graph_data/patterns/"
+    graph_dir = "data/graph_data/bird_dev_graphs/pickles"
+    output_file = "data/analysis/bird_dev_pattern_stats.csv"
     results = process(graph_dir=graph_dir, pattern_dir=pattern_dir)
     save_results(results, output_file=output_file)
     logging.info(f"Results saved to {output_file}")
