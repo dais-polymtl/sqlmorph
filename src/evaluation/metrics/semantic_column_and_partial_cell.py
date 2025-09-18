@@ -188,6 +188,9 @@ def match_columns(context):
                 (context["pred_cols"][pred_idx], context["gt_cols"][gt_idx])
             )
 
+    # Sort matched columns lexicographically for deterministic behavior
+    matched_cols.sort(key=lambda x: (x[0], x[1]))
+
     logger.log("debug", "COLUMN_MATCHING", {"MATCHED_COLUMNS": matched_cols})
 
     # Update context with column matching results
@@ -214,17 +217,17 @@ def match_rows(context):
     pred_rows = context["pred_rows"]
     matched_cols = context["matched_cols"]
 
-    # Get indices for matched columns
-    gt_matched_indices = [
-        idx
-        for idx, col in enumerate(gt_cols)
-        if col in [gt_col for _, gt_col in matched_cols]
-    ]
-    pred_matched_indices = [
-        idx
-        for idx, col in enumerate(pred_cols)
-        if col in [pred_col for pred_col, _ in matched_cols]
-    ]
+    # Get indices for matched columns in their original order for deterministic behavior
+    gt_matched_indices = []
+    pred_matched_indices = []
+
+    # Process matched columns (already sorted in match_columns function)
+    for pred_col, gt_col in matched_cols:
+        if gt_col in gt_cols and pred_col in pred_cols:
+            gt_idx = gt_cols.index(gt_col)
+            pred_idx = pred_cols.index(pred_col)
+            gt_matched_indices.append(gt_idx)
+            pred_matched_indices.append(pred_idx)
 
     # Project rows to only include matched columns
     gt_projected_rows = []
@@ -242,27 +245,99 @@ def match_rows(context):
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
     p_cells = p_rows * len(pred_cols)
+    num_matched_cols = len(matched_cols)
 
-    # Count frequencies of projected rows in both datasets
+    # Phase 1: Exact Row Matching using efficient frequency-based approach
     gt_counter = Counter(gt_projected_rows)
     pred_counter = Counter(pred_projected_rows)
 
-    # Calculate matched rows (intersection of row patterns)
-    matched_rows = 0
-    for row_tuple in set(gt_counter) & set(pred_counter):
-        min_count = min(gt_counter[row_tuple], pred_counter[row_tuple])
-        matched_rows += min_count
+    # Find exact matches and count matched cells
+    exact_matched_cells = 0
+    matched_row_counts = {}
 
-    # Calculate matched cells: |MatchedRows| × |MatchedColumns|
-    matched_cells = matched_rows * context["num_matched_cols"]
+    for row in gt_counter:
+        if row in pred_counter:
+            # Number of matches is the minimum count between gt and pred
+            matches = min(gt_counter[row], pred_counter[row])
+            matched_row_counts[row] = matches
+            exact_matched_cells += matches * num_matched_cols
+
+    logger.log(
+        "debug", f"Phase 1 complete: {exact_matched_cells} cells from exact matches"
+    )
+
+    # Phase 2: Partial Row Matching for remaining unmatched rows
+    # Create lists of remaining unmatched rows
+    remaining_gt_rows = []
+    remaining_pred_rows = []
+
+    # Add unmatched gt rows
+    for row, count in gt_counter.items():
+        matched_count = matched_row_counts.get(row, 0)
+        remaining_count = count - matched_count
+        remaining_gt_rows.extend([row] * remaining_count)
+
+    # Add unmatched pred rows
+    for row, count in pred_counter.items():
+        matched_count = matched_row_counts.get(row, 0)
+        remaining_count = count - matched_count
+        remaining_pred_rows.extend([row] * remaining_count)
+
+    # Perform partial matching on remaining rows using greedy strategy
+    partial_matched_cells = 0.0
+
+    while remaining_gt_rows and remaining_pred_rows:
+        best_similarity = 0
+        best_gt_idx = -1
+        best_pred_idx = -1
+
+        # Find the pair with highest similarity score
+        for gt_idx, gt_row in enumerate(remaining_gt_rows):
+            for pred_idx, pred_row in enumerate(remaining_pred_rows):
+                # Calculate cell-level similarity between rows
+                matching_cells = sum(
+                    1
+                    for gt_val, pred_val in zip(gt_row, pred_row)
+                    if gt_val == pred_val
+                )
+                similarity = (
+                    matching_cells / num_matched_cols if num_matched_cols > 0 else 0
+                )  # Normalize by number of matched columns
+
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_gt_idx = gt_idx
+                    best_pred_idx = pred_idx
+
+        # If we found a match with some similarity, record it and remove the rows
+        if best_similarity > 0:
+            # Partial match contributes fractional cells based on similarity
+            partial_matched_cells += best_similarity * num_matched_cols
+            # Remove the matched rows from consideration
+            remaining_gt_rows.pop(best_gt_idx)
+            remaining_pred_rows.pop(best_pred_idx)
+        else:
+            # No more matches possible, break out of loop
+            break
+
+    logger.log(
+        "debug", f"Phase 2 complete: {partial_matched_cells} cells from partial matches"
+    )
+
+    # Total matched cells = exact matches + partial matches
+    total_matched_cells = exact_matched_cells + partial_matched_cells
 
     # Update context with row matching results
     context.update(
         {
             "gt_projected_rows": gt_projected_rows,
             "pred_projected_rows": pred_projected_rows,
-            "matched_rows": matched_rows,
-            "matched_cells": matched_cells,
+            "matched_rows": (
+                exact_matched_cells // num_matched_cols if num_matched_cols > 0 else 0
+            ),  # For backward compatibility
+            "matched_cells": total_matched_cells,
+            "exact_matched_cells": exact_matched_cells,
+            "partial_matched_cells": partial_matched_cells,
             "ground_truth_cells": g_cells,
             "predicted_cells": p_cells,
         }
