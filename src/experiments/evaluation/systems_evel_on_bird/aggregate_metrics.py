@@ -29,11 +29,11 @@ def compute_average_metrics(system_data, system_name, is_common_failure=False):
             exec_accuracy_values.append(exec_metric["EX"])
 
     if exec_accuracy_values:
-        ex_avg = round((sum(exec_accuracy_values) / len(exec_accuracy_values)) * 100, 2)
+        ex_avg = round(sum(exec_accuracy_values) / len(exec_accuracy_values), 4)
     else:
         ex_avg = 0.0
 
-    result_row["EXECUTION_ACCURACY"] = json.dumps({"EX": ex_avg / 100})
+    result_row["EXECUTION_ACCURACY"] = json.dumps({"EX": ex_avg})
 
     # 2. Compute aggregated metrics for the three techniques
     techniques = [
@@ -64,18 +64,18 @@ def compute_average_metrics(system_data, system_name, is_common_failure=False):
                 if "latency" in metric:
                     latency_values.append(metric["latency"])
 
-        # Calculate averages
+        # Calculate averages with 4 decimal points
         agg_metrics = {}
         if ex_values:
-            agg_metrics["EX"] = sum(ex_values) / len(ex_values)
+            agg_metrics["EX"] = round(sum(ex_values) / len(ex_values), 4)
         if exp_values:
-            agg_metrics["EXP"] = sum(exp_values) / len(exp_values)
+            agg_metrics["EXP"] = round(sum(exp_values) / len(exp_values), 4)
         if exr_values:
-            agg_metrics["EXR"] = sum(exr_values) / len(exr_values)
+            agg_metrics["EXR"] = round(sum(exr_values) / len(exr_values), 4)
         if f1_values:
-            agg_metrics["F1"] = sum(f1_values) / len(f1_values)
+            agg_metrics["F1"] = round(sum(f1_values) / len(f1_values), 4)
         if latency_values:
-            agg_metrics["latency"] = sum(latency_values) / len(latency_values)
+            agg_metrics["latency"] = round(sum(latency_values) / len(latency_values), 4)
 
         result_row[technique] = json.dumps(agg_metrics)
 

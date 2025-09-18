@@ -16,22 +16,15 @@ def parse_metrics(metrics_str):
         return None
 
 
-def create_evaluation_plots(csv_path: str, output_dir: str = None):
+def create_evaluation_plots(
+    csv_path: str, json_path: str, techniques: list, output_dir: str = None
+):
     """Create evaluation plots for all techniques and groups"""
 
     # Read the CSV file
     df = pd.read_csv(csv_path)
 
-    # Define techniques
-    techniques = [
-        "EXACT_COLUMN_AND_EXACT_CELL",
-        "SEMANTIC_COLUMN_AND_EXACT_CELL",
-        "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
-    ]
-
     # Get groups in the order they appear in the original JSON file
-    # First, try to find the corresponding JSON file
-    json_path = csv_path.replace("_evaluation_results.csv", ".json")
     if Path(json_path).exists():
         with open(json_path, "r") as f:
             mutants_data = json.load(f)
@@ -41,13 +34,20 @@ def create_evaluation_plots(csv_path: str, output_dir: str = None):
         groups = df["group_name"].drop_duplicates().tolist()
 
     n_groups = len(groups)
+    n_techniques = len(techniques)
 
-    # Create figure with subplots - make it vertical rectangle (taller than wide)
-    fig, axes = plt.subplots(3, n_groups, figsize=(4 * n_groups, 15))
+    # Create figure with subplots - dynamically adjust rows based on number of techniques
+    fig, axes = plt.subplots(
+        n_techniques, n_groups, figsize=(4 * n_groups, 5 * n_techniques)
+    )
 
-    # Handle case where there's only one group
-    if n_groups == 1:
-        axes = axes.reshape(3, 1)
+    # Handle case where there's only one group or one technique
+    if n_techniques == 1 and n_groups == 1:
+        axes = np.array([[axes]])
+    elif n_techniques == 1:
+        axes = axes.reshape(1, -1)
+    elif n_groups == 1:
+        axes = axes.reshape(-1, 1)
 
     # Color mapping for metrics
     colors = {"EXP": "blue", "EXR": "red", "F1": "green"}
@@ -183,14 +183,9 @@ def create_evaluation_plots(csv_path: str, output_dir: str = None):
     plt.show()
 
 
-def print_summary_statistics(csv_path: str):
+def print_summary_statistics(csv_path: str, techniques: list):
     """Print summary statistics for the evaluation results"""
     df = pd.read_csv(csv_path)
-    techniques = [
-        "EXACT_COLUMN_AND_EXACT_CELL",
-        "SEMANTIC_COLUMN_AND_EXACT_CELL",
-        "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
-    ]
 
     print("\n" + "=" * 80)
     print("SUMMARY STATISTICS")
@@ -232,13 +227,23 @@ def print_summary_statistics(csv_path: str):
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
     DATA = "data/evaluation/experiments/controlled_error_sensitivity/manual_mutants"
-    csv_path = f"{DATA}/mutants_v1_evaluation_results.csv"
-    output_dir = f"{DATA}/plots/"
+    csv_path = f"{DATA}/mutants_v1_evaluation_results_PARTIAL.csv"
+    json_path = f"{DATA}/mutants_v1.json"
+    output_dir = f"{DATA}/plots_TESTPARTIAL_2/"
+
+    techniques = [
+        "FREE_COLUMN_AND_PARTIAL_CELL",
+        "EXACT_COLUMN_AND_EXACT_CELL",
+        "EXACT_COLUMN_AND_PARTIAL_CELL",
+        "SEMANTIC_COLUMN_AND_EXACT_CELL",
+        "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+    ]
 
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"CSV file: {csv_path}")
+    print(f"JSON file: {json_path}")
     print(f"Output directory: {output_dir}")
 
     if not Path(csv_path).exists():
@@ -246,6 +251,6 @@ if __name__ == "__main__":
         print("Please run the evaluation script first to generate the CSV file")
     else:
         print("Creating evaluation plots...")
-        create_evaluation_plots(csv_path, output_dir)
-        print_summary_statistics(csv_path)
+        create_evaluation_plots(csv_path, json_path, techniques, output_dir)
+        print_summary_statistics(csv_path, techniques)
         print("Report generation complete!")
