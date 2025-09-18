@@ -79,8 +79,8 @@ def match_columns(context: dict):
     gt_cols = context["gt_cols"]
     pred_cols = context["pred_cols"]
 
-    # Find intersection of columns
-    common_cols = set(gt_cols) & set(pred_cols)
+    # Find intersection of columns and sort lexicographically for deterministic behavior
+    common_cols = sorted(set(gt_cols) & set(pred_cols))
 
     # Check if there are no common columns
     if len(common_cols) == 0:
@@ -96,7 +96,7 @@ def match_columns(context: dict):
         context["predicted_cells"] = len(context["pred_rows"]) * len(pred_cols)
         return context
 
-    # Create index mappings for common columns
+    # Create index mappings for common columns in their sorted order
     gt_col_to_idx = {col: idx for idx, col in enumerate(gt_cols)}
     pred_col_to_idx = {col: idx for idx, col in enumerate(pred_cols)}
 
@@ -129,7 +129,6 @@ def match_rows(context: dict):
     pred_common_indices = context["pred_common_indices"]
     common_cols = context["common_cols"]
     gt_cols = context["gt_cols"]
-    # pred_cols = context["pred_cols"]
 
     # Project rows to only include common columns
     gt_projected_rows = [
@@ -145,16 +144,85 @@ def match_rows(context: dict):
     g_cells = g_rows * len(gt_cols)
     p_cells = p_rows * len(common_cols)  # no penalize extra columns in predicted SQL
 
-    # Count frequencies of projected rows
+    # Phase 1: Exact Row Matching using efficient frequency-based approach
     gt_counter = Counter(gt_projected_rows)
     pred_counter = Counter(pred_projected_rows)
 
-    # Calculate matched cells
-    matched_rows = 0
-    for row_tuple in set(gt_counter) & set(pred_counter):
-        matched_rows += min(gt_counter[row_tuple], pred_counter[row_tuple])
+    # Find exact matches and count matched cells
+    exact_matched_cells = 0
+    matched_row_counts = {}
 
-    matched_cells = matched_rows * len(common_cols)
+    for row in gt_counter:
+        if row in pred_counter:
+            # Number of matches is the minimum count between gt and pred
+            matches = min(gt_counter[row], pred_counter[row])
+            matched_row_counts[row] = matches
+            exact_matched_cells += matches * len(common_cols)
+
+    logger.log(
+        "debug", f"Phase 1 complete: {exact_matched_cells} cells from exact matches"
+    )
+
+    # Phase 2: Partial Row Matching for remaining unmatched rows
+    # Create lists of remaining unmatched rows
+    remaining_gt_rows = []
+    remaining_pred_rows = []
+
+    # Add unmatched gt rows
+    for row, count in gt_counter.items():
+        matched_count = matched_row_counts.get(row, 0)
+        remaining_count = count - matched_count
+        remaining_gt_rows.extend([row] * remaining_count)
+
+    # Add unmatched pred rows
+    for row, count in pred_counter.items():
+        matched_count = matched_row_counts.get(row, 0)
+        remaining_count = count - matched_count
+        remaining_pred_rows.extend([row] * remaining_count)
+
+    # Perform partial matching on remaining rows using greedy strategy
+    partial_matched_cells = 0.0
+
+    while remaining_gt_rows and remaining_pred_rows:
+        best_similarity = 0
+        best_gt_idx = -1
+        best_pred_idx = -1
+
+        # Find the pair with highest similarity score
+        for gt_idx, gt_row in enumerate(remaining_gt_rows):
+            for pred_idx, pred_row in enumerate(remaining_pred_rows):
+                # Calculate cell-level similarity between rows
+                matching_cells = sum(
+                    1
+                    for gt_val, pred_val in zip(gt_row, pred_row)
+                    if gt_val == pred_val
+                )
+                similarity = matching_cells / len(
+                    common_cols
+                )  # Normalize by number of columns
+
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_gt_idx = gt_idx
+                    best_pred_idx = pred_idx
+
+        # If we found a match with some similarity, record it and remove the rows
+        if best_similarity > 0:
+            # Partial match contributes fractional cells based on similarity
+            partial_matched_cells += best_similarity * len(common_cols)
+            # Remove the matched rows from consideration
+            remaining_gt_rows.pop(best_gt_idx)
+            remaining_pred_rows.pop(best_pred_idx)
+        else:
+            # No more matches possible, break out of loop
+            break
+
+    logger.log(
+        "debug", f"Phase 2 complete: {partial_matched_cells} cells from partial matches"
+    )
+
+    # Total matched cells = exact matches + partial matches
+    total_matched_cells = exact_matched_cells + partial_matched_cells
 
     context.update(
         {
@@ -162,8 +230,12 @@ def match_rows(context: dict):
             "pred_projected_rows": pred_projected_rows,
             "ground_truth_cells": g_cells,
             "predicted_cells": p_cells,
-            "matched_rows": matched_rows,
-            "matched_cells": matched_cells,
+            "matched_rows": (
+                exact_matched_cells // len(common_cols) if len(common_cols) > 0 else 0
+            ),  # For backward compatibility
+            "matched_cells": total_matched_cells,
+            "exact_matched_cells": exact_matched_cells,
+            "partial_matched_cells": partial_matched_cells,
         }
     )
 

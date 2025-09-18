@@ -8,10 +8,13 @@ import numpy as np
 import pandas as pd
 
 from src.evaluation.metrics import (
-    unified_column_and_semantic_row,
-    exact_column_and_exact_cell,
-    semantic_column_and_exact_cell,
     execution_accuracy,
+    exact_column_and_exact_cell,
+    exact_column_and_partial_cell,
+    semantic_column_and_exact_cell,
+    semantic_column_and_partial_cell,
+    free_column_and_partial_cell,
+    unified_column_and_semantic_row,
 )
 from src.core.database.database_handler import DBMS
 from src.core.logger import Logger
@@ -22,8 +25,12 @@ logger = Logger(__name__)
 
 class EvaluationTechnique(enum.Enum):
     EXECUTION_ACCURACY = "execution_accuracy"
+
     EXACT_COLUMN_AND_EXACT_CELL = "exact_column_and_exact_cell"
+    EXACT_COLUMN_AND_PARTIAL_CELL = "exact_column_and_partial_cell"
     SEMANTIC_COLUMN_AND_EXACT_CELL = "semantic_column_and_exact_cell"
+    SEMANTIC_COLUMN_AND_PARTIAL_CELL = "semantic_column_and_partial_cell"
+    FREE_COLUMN_AND_PARTIAL_CELL = "free_column_and_partial_cell"
     UNIFIED_COLUMN_AND_SEMANTIC_ROW = "unified_column_and_semantic_row"
 
 
@@ -72,6 +79,34 @@ class Evaluation:
             == EvaluationTechnique.EXECUTION_ACCURACY
         ):
             context = execution_accuracy.run_evaluation_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
+            )
+        elif (
+            self.config["evaluation_technique"]
+            == EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL
+        ):
+            context = exact_column_and_partial_cell.run_evaluation_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
+            )
+        elif (
+            self.config["evaluation_technique"]
+            == EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL
+        ):
+            context = semantic_column_and_partial_cell.run_evaluation_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
+                embedding_model=self.config["embedding_model"],
+            )
+        elif (
+            self.config["evaluation_technique"]
+            == EvaluationTechnique.FREE_COLUMN_AND_PARTIAL_CELL
+        ):
+            context = free_column_and_partial_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],

@@ -1,5 +1,4 @@
 import time
-from collections import Counter
 
 from src.core.database.database_handler import DatabaseHandler, DBMS
 from src.core.logger import Logger
@@ -76,44 +75,7 @@ def match_columns(context: dict):
     if context["has_error"] or context.get("ex_is_one", False):
         return context
 
-    gt_cols = context["gt_cols"]
-    pred_cols = context["pred_cols"]
-
-    # Find intersection of columns
-    common_cols = set(gt_cols) & set(pred_cols)
-
-    # Check if there are no common columns
-    if len(common_cols) == 0:
-        context["has_error"] = True
-        context["metrics"] = {
-            "EX": 1 if set(context["gt_rows"]) == set(context["pred_rows"]) else 0,
-            "EXP": 0.0,
-            "EXR": 0.0,
-            "F1": 0.0,
-        }
-        context["matched_cells"] = 0
-        context["ground_truth_cells"] = len(context["gt_rows"]) * len(gt_cols)
-        context["predicted_cells"] = len(context["pred_rows"]) * len(pred_cols)
-        return context
-
-    # Create index mappings for common columns
-    gt_col_to_idx = {col: idx for idx, col in enumerate(gt_cols)}
-    pred_col_to_idx = {col: idx for idx, col in enumerate(pred_cols)}
-
-    gt_common_indices = [
-        gt_col_to_idx[col] for col in common_cols if col in gt_col_to_idx
-    ]
-    pred_common_indices = [
-        pred_col_to_idx[col] for col in common_cols if col in pred_col_to_idx
-    ]
-
-    context.update(
-        {
-            "common_cols": common_cols,
-            "gt_common_indices": gt_common_indices,
-            "pred_common_indices": pred_common_indices,
-        }
-    )
+    # No column matching needed - we keep all columns as cell tokens
 
     return context
 
@@ -125,45 +87,107 @@ def match_rows(context: dict):
 
     gt_rows = context["gt_rows"]
     pred_rows = context["pred_rows"]
-    gt_common_indices = context["gt_common_indices"]
-    pred_common_indices = context["pred_common_indices"]
-    common_cols = context["common_cols"]
     gt_cols = context["gt_cols"]
-    # pred_cols = context["pred_cols"]
+    pred_cols = context["pred_cols"]
 
-    # Project rows to only include common columns
-    gt_projected_rows = [
-        tuple(row[idx] for idx in gt_common_indices) for row in gt_rows
-    ]
-    pred_projected_rows = [
-        tuple(row[idx] for idx in pred_common_indices) for row in pred_rows
-    ]
+    # Step 1: Convert rows to cell token sets (col_name=value)
+    def row_to_cell_tokens(row, columns):
+        """Convert a row to a set of cell tokens in the form 'col_name=value'"""
+        return set(f"{col}={val}" for col, val in zip(columns, row))
 
-    # Calculate total cells and rows
-    g_rows = len(gt_rows)
-    p_rows = len(pred_rows)
-    g_cells = g_rows * len(gt_cols)
-    p_cells = p_rows * len(common_cols)  # no penalize extra columns in predicted SQL
+    gt_cell_sets = [row_to_cell_tokens(row, gt_cols) for row in gt_rows]
+    pred_cell_sets = [row_to_cell_tokens(row, pred_cols) for row in pred_rows]
 
-    # Count frequencies of projected rows
-    gt_counter = Counter(gt_projected_rows)
-    pred_counter = Counter(pred_projected_rows)
+    # Calculate total cells
+    g_cells = sum(len(cell_set) for cell_set in gt_cell_sets)
+    p_cells = sum(len(cell_set) for cell_set in pred_cell_sets)
 
-    # Calculate matched cells
-    matched_rows = 0
-    for row_tuple in set(gt_counter) & set(pred_counter):
-        matched_rows += min(gt_counter[row_tuple], pred_counter[row_tuple])
+    # Step 2: Two-phase row matching
 
-    matched_cells = matched_rows * len(common_cols)
+    # Phase A: Exact row matching
+    exact_matched_cells = 0
+    remaining_gt_indices = list(range(len(gt_cell_sets)))
+    remaining_pred_indices = list(range(len(pred_cell_sets)))
+
+    # Find exact matches
+    gt_to_remove = []
+    pred_to_remove = []
+
+    for gt_idx in remaining_gt_indices:
+        for pred_idx in remaining_pred_indices:
+            if gt_cell_sets[gt_idx] == pred_cell_sets[pred_idx]:
+                # Exact match found
+                exact_matched_cells += len(gt_cell_sets[gt_idx])
+                gt_to_remove.append(gt_idx)
+                pred_to_remove.append(pred_idx)
+                break  # 1-to-1 matching
+
+    # Remove exact matches from remaining indices
+    for idx in sorted(gt_to_remove, reverse=True):
+        remaining_gt_indices.remove(idx)
+    for idx in sorted(pred_to_remove, reverse=True):
+        remaining_pred_indices.remove(idx)
+
+    logger.log(
+        "debug", f"Phase A complete: {exact_matched_cells} cells from exact matches"
+    )
+
+    # Phase B: Partial row matching using Jaccard similarity
+    partial_matched_cells = 0
+
+    while remaining_gt_indices and remaining_pred_indices:
+        best_similarity = 0
+        best_gt_idx = -1
+        best_pred_idx = -1
+        best_intersection_size = 0
+
+        # Find the pair with highest Jaccard similarity
+        for gt_idx in remaining_gt_indices:
+            for pred_idx in remaining_pred_indices:
+                gt_set = gt_cell_sets[gt_idx]
+                pred_set = pred_cell_sets[pred_idx]
+
+                intersection = gt_set & pred_set
+                union = gt_set | pred_set
+
+                if len(union) > 0:
+                    jaccard_sim = len(intersection) / len(union)
+
+                    # Break ties deterministically using lexicographic order
+                    if jaccard_sim > best_similarity or (
+                        jaccard_sim == best_similarity
+                        and (gt_idx, pred_idx) < (best_gt_idx, best_pred_idx)
+                    ):
+                        best_similarity = jaccard_sim
+                        best_gt_idx = gt_idx
+                        best_pred_idx = pred_idx
+                        best_intersection_size = len(intersection)
+
+        # If we found a match with some similarity, record it
+        if best_similarity > 0:
+            partial_matched_cells += best_intersection_size
+            remaining_gt_indices.remove(best_gt_idx)
+            remaining_pred_indices.remove(best_pred_idx)
+        else:
+            # No more matches possible
+            break
+
+    logger.log(
+        "debug", f"Phase B complete: {partial_matched_cells} cells from partial matches"
+    )
+
+    # Step 3: Compute totals
+    total_matched_cells = exact_matched_cells + partial_matched_cells
 
     context.update(
         {
-            "gt_projected_rows": gt_projected_rows,
-            "pred_projected_rows": pred_projected_rows,
+            "gt_cell_sets": gt_cell_sets,
+            "pred_cell_sets": pred_cell_sets,
             "ground_truth_cells": g_cells,
             "predicted_cells": p_cells,
-            "matched_rows": matched_rows,
-            "matched_cells": matched_cells,
+            "matched_cells": total_matched_cells,
+            "exact_matched_cells": exact_matched_cells,
+            "partial_matched_cells": partial_matched_cells,
         }
     )
 

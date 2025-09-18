@@ -161,8 +161,8 @@ if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
     DATA = "data/evaluation/experiments/controlled_error_sensitivity/manual_mutants"
     mutants_json_path = f"{DATA}/mutants_v1.json"
-    output_csv_path = f"{DATA}/mutants_v1_evaluation_results.csv"
-    log_dir = f"{DATA}/logs/mutants_v1/"
+    output_csv_path = f"{DATA}/mutants_v1_evaluation_results_PARTIAL.csv"
+    log_dir = f"{DATA}/logs/mutants_v1_PARTIAL/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
 
@@ -170,10 +170,12 @@ if __name__ == "__main__":
     os.makedirs(log_dir, exist_ok=True)
 
     techniques = [
-        # EvaluationTechnique.EXECUTION_ACCURACY,
         EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-        EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.FREE_COLUMN_AND_PARTIAL_CELL,
+        # EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
     ]
 
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
