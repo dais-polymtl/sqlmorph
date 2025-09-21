@@ -216,6 +216,7 @@ def match_rows(context):
     gt_rows = context["gt_rows"]
     pred_rows = context["pred_rows"]
     matched_cols = context["matched_cols"]
+    penalize_extra_pred_cols = context["penalize_extra_pred_cols"]
 
     # Get indices for matched columns in their original order for deterministic behavior
     gt_matched_indices = []
@@ -244,8 +245,12 @@ def match_rows(context):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    p_cells = p_rows * len(pred_cols)
     num_matched_cols = len(matched_cols)
+
+    if penalize_extra_pred_cols:
+        p_cells = p_rows * len(pred_cols)
+    else:
+        p_cells = p_rows * num_matched_cols
 
     # Phase 1: Exact Row Matching using efficient frequency-based approach
     gt_counter = Counter(gt_projected_rows)
@@ -405,6 +410,7 @@ def run_evaluation_pipeline(
     ground_truth_sql: str,
     db_params: dict,
     embedding_model: OpenAIModel | OllamaModel | HuggingFaceModel,
+    penalize_extra_pred_cols: bool,
 ):
     """
     Orchestrate the SQL result evaluation pipeline by running the four stages in sequence.
@@ -414,6 +420,7 @@ def run_evaluation_pipeline(
         "ground_truth_sql": ground_truth_sql,
         "db_params": db_params,
         "embedding_model_name": embedding_model,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "metrics": {},
         "has_error": False,
     }
@@ -457,20 +464,20 @@ if __name__ == "__main__":
         "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
     }
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
+    penalize_extra_pred_cols = True
 
     context = run_evaluation_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
         db_params=db_params,
         embedding_model=embedding_model,
+        penalize_extra_pred_cols=penalize_extra_pred_cols,
     )
 
     # print evaluation results
     metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
     print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
     print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
     print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
     print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
     print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==========================================================")

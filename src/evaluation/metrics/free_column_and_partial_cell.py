@@ -89,6 +89,7 @@ def match_rows(context: dict):
     pred_rows = context["pred_rows"]
     gt_cols = context["gt_cols"]
     pred_cols = context["pred_cols"]
+    penalize_extra_pred_cols = context["penalize_extra_pred_cols"]
 
     # Step 1: Convert rows to cell token sets (col_name=value)
     def row_to_cell_tokens(row, columns):
@@ -98,16 +99,15 @@ def match_rows(context: dict):
     gt_cell_sets = [row_to_cell_tokens(row, gt_cols) for row in gt_rows]
     pred_cell_sets = [row_to_cell_tokens(row, pred_cols) for row in pred_rows]
 
-    # Calculate total cells
+    # Calculate total ground truth cells
     g_cells = sum(len(cell_set) for cell_set in gt_cell_sets)
-    p_cells = sum(len(cell_set) for cell_set in pred_cell_sets)
 
-    # Step 2: Two-phase row matching
-
+    # Two-phase row matching
     # Phase A: Exact row matching
     exact_matched_cells = 0
     remaining_gt_indices = list(range(len(gt_cell_sets)))
     remaining_pred_indices = list(range(len(pred_cell_sets)))
+    matched_pairs_overlaps = []  # Track overlaps from matched pairs for lenient mode
 
     # Find exact matches
     gt_to_remove = []
@@ -117,7 +117,9 @@ def match_rows(context: dict):
         for pred_idx in remaining_pred_indices:
             if gt_cell_sets[gt_idx] == pred_cell_sets[pred_idx]:
                 # Exact match found
-                exact_matched_cells += len(gt_cell_sets[gt_idx])
+                overlap_size = len(gt_cell_sets[gt_idx])
+                exact_matched_cells += overlap_size
+                matched_pairs_overlaps.append(overlap_size)
                 gt_to_remove.append(gt_idx)
                 pred_to_remove.append(pred_idx)
                 break  # 1-to-1 matching
@@ -166,6 +168,7 @@ def match_rows(context: dict):
         # If we found a match with some similarity, record it
         if best_similarity > 0:
             partial_matched_cells += best_intersection_size
+            matched_pairs_overlaps.append(best_intersection_size)
             remaining_gt_indices.remove(best_gt_idx)
             remaining_pred_indices.remove(best_pred_idx)
         else:
@@ -176,7 +179,13 @@ def match_rows(context: dict):
         "debug", f"Phase B complete: {partial_matched_cells} cells from partial matches"
     )
 
-    # Step 3: Compute totals
+    if penalize_extra_pred_cols:
+        # Strict mode: use all predicted tokens
+        p_cells = sum(len(cell_set) for cell_set in pred_cell_sets)
+    else:
+        # Lenient mode: use only overlapping tokens from matched pairs
+        p_cells = sum(matched_pairs_overlaps)
+
     total_matched_cells = exact_matched_cells + partial_matched_cells
 
     context.update(
@@ -238,11 +247,13 @@ def run_evaluation_pipeline(
     predicted_sql: str,
     ground_truth_sql: str,
     db_params: dict,
+    penalize_extra_pred_cols: bool,
 ):
     context = {
         "db_params": db_params,
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "metrics": {},
         "has_error": False,
         "ex_is_one": False,
@@ -287,18 +298,19 @@ if __name__ == "__main__":
         "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
     }
 
+    penalize_extra_pred_cols = True
+
     context = run_evaluation_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
         db_params=db_params,
+        penalize_extra_pred_cols=True,
     )
 
     # print evaluation results
     metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
     print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
     print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
     print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
     print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
     print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==========================================================")

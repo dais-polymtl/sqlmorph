@@ -381,10 +381,8 @@ if __name__ == "__main__":
 
     # print evaluation results
     metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
     print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
     print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
     print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
     print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
     print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==========================================================")
