@@ -129,7 +129,8 @@ def match_rows(context: dict):
     pred_common_indices = context["pred_common_indices"]
     common_cols = context["common_cols"]
     gt_cols = context["gt_cols"]
-    # pred_cols = context["pred_cols"]
+    pred_cols = context["pred_cols"]
+    penalize_extra_pred_cols = context["penalize_extra_pred_cols"]
 
     # Project rows to only include common columns
     gt_projected_rows = [
@@ -143,7 +144,11 @@ def match_rows(context: dict):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    p_cells = p_rows * len(common_cols)  # no penalize extra columns in predicted SQL
+
+    if penalize_extra_pred_cols:
+        p_cells = p_rows * len(pred_cols)
+    else:
+        p_cells = p_rows * len(common_cols)
 
     # Count frequencies of projected rows
     gt_counter = Counter(gt_projected_rows)
@@ -214,11 +219,13 @@ def run_evaluation_pipeline(
     predicted_sql: str,
     ground_truth_sql: str,
     db_params: dict,
+    penalize_extra_pred_cols: bool,
 ):
     context = {
         "db_params": db_params,
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "metrics": {},
         "has_error": False,
         "ex_is_one": False,
@@ -262,19 +269,19 @@ if __name__ == "__main__":
         "dbms": DBMS.SQLITE,
         "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
     }
+    penalize_extra_pred_cols = True
 
     context = run_evaluation_pipeline(
         predicted_sql=predicted_sql,
         ground_truth_sql=ground_truth_sql,
         db_params=db_params,
+        penalize_extra_pred_cols=penalize_extra_pred_cols,
     )
 
     # print evaluation results
     metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
     print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
     print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
     print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
     print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
     print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==========================================================")

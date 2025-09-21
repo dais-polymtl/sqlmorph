@@ -47,12 +47,22 @@ class Evaluation:
         context = None
         if (
             self.config["evaluation_technique"]
+            == EvaluationTechnique.EXECUTION_ACCURACY
+        ):
+            context = execution_accuracy.run_evaluation_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
+            )
+        elif (
+            self.config["evaluation_technique"]
             == EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL
         ):
             context = exact_column_and_exact_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
+                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
             )
         elif (
             self.config["evaluation_technique"]
@@ -63,25 +73,7 @@ class Evaluation:
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
                 embedding_model=self.config["embedding_model"],
-            )
-        elif (
-            self.config["evaluation_technique"]
-            == EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
-        ):
-            context = unified_column_and_semantic_row.run_eval_pipeline(
-                predicted_sql=predicted_sql,
-                ground_truth_sql=ground_truth_sql,
-                db_params=self.config["db_params"],
-                embedding_model=self.config["embedding_model"],
-            )
-        elif (
-            self.config["evaluation_technique"]
-            == EvaluationTechnique.EXECUTION_ACCURACY
-        ):
-            context = execution_accuracy.run_evaluation_pipeline(
-                predicted_sql=predicted_sql,
-                ground_truth_sql=ground_truth_sql,
-                db_params=self.config["db_params"],
+                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
             )
         elif (
             self.config["evaluation_technique"]
@@ -91,6 +83,7 @@ class Evaluation:
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
+                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
             )
         elif (
             self.config["evaluation_technique"]
@@ -101,6 +94,7 @@ class Evaluation:
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
                 embedding_model=self.config["embedding_model"],
+                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
             )
         elif (
             self.config["evaluation_technique"]
@@ -110,6 +104,17 @@ class Evaluation:
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
+                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
+            )
+        elif (
+            self.config["evaluation_technique"]
+            == EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
+        ):
+            context = unified_column_and_semantic_row.run_eval_pipeline(
+                predicted_sql=predicted_sql,
+                ground_truth_sql=ground_truth_sql,
+                db_params=self.config["db_params"],
+                embedding_model=self.config["embedding_model"],
             )
 
         if log:
@@ -161,15 +166,32 @@ if __name__ == "__main__":
     predicted_sql = "SELECT sub.MailStreet, sub.School, sub.MailCity, sub.MailState, sub.FRPM FROM (SELECT T2.MailStreet AS MailStreet, T2.School AS School, T2.MailCity AS MailCity, T2.MailState AS MailState, T1.`FRPM Count (K-12)` AS FRPM, T2.County AS County, T2.District AS District, T2.Zip AS Zip, T2.Phone AS Phone FROM frpm AS T1 JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY FRPM DESC LIMIT 9) AS sub ORDER BY sub.FRPM DESC LIMIT 5"
     ground_truth_sql = "SELECT T2.MailStreet FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T1.`FRPM Count (K-12)` DESC LIMIT 1"
 
+    predicted_sql = """
+    SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
+    FROM satscores T1 
+    JOIN schools T3 ON T1.cds = T3.CDSCode 
+    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
+    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
+    LIMIT 10;
+    """
+    ground_truth_sql = """
+    SELECT T1.Phone
+    FROM schools AS T1 
+    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
+    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
+    LIMIT 10;
+    """
+
     db_name = "california_schools"
 
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.EXECUTION_ACCURACY,
+        "evaluation_technique": EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
         "db_params": {
             "dbms": DBMS.SQLITE,
             "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
         },
+        "penalize_extra_columns": True,
         "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
         "logs_dir_path": "data/evaluation_outputs/",
     }

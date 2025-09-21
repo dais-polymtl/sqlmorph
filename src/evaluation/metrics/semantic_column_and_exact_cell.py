@@ -213,6 +213,7 @@ def match_rows(context):
     gt_rows = context["gt_rows"]
     pred_rows = context["pred_rows"]
     matched_cols = context["matched_cols"]
+    penalize_extra_pred_cols = context.get("penalize_extra_pred_cols", False)
 
     # Get indices for matched columns
     gt_matched_indices = [
@@ -241,7 +242,11 @@ def match_rows(context):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    p_cells = p_rows * len(pred_cols)
+
+    if penalize_extra_pred_cols:
+        p_cells = p_rows * len(pred_cols)
+    else:
+        p_cells = p_rows * context["num_matched_cols"]
 
     # Count frequencies of projected rows in both datasets
     gt_counter = Counter(gt_projected_rows)
@@ -330,6 +335,7 @@ def run_evaluation_pipeline(
     ground_truth_sql: str,
     db_params: dict,
     embedding_model: OpenAIModel | OllamaModel | HuggingFaceModel,
+    penalize_extra_pred_cols: bool = False,
 ):
     """
     Orchestrate the SQL result evaluation pipeline by running the four stages in sequence.
@@ -339,6 +345,7 @@ def run_evaluation_pipeline(
         "ground_truth_sql": ground_truth_sql,
         "db_params": db_params,
         "embedding_model_name": embedding_model,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "metrics": {},
         "has_error": False,
     }
@@ -388,14 +395,13 @@ if __name__ == "__main__":
         ground_truth_sql=ground_truth_sql,
         db_params=db_params,
         embedding_model=embedding_model,
+        penalize_extra_pred_cols=False,  # Set to True to penalize extra predicted columns
     )
 
     # print evaluation results
     metrics = context.get("metrics", {})
-    print("=================== Evaluation Results ===================")
     print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
     print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
     print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
     print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
     print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==========================================================")
