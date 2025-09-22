@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.evaluation.metrics import (
+from src.metrics.metrics import (
     execution_accuracy,
     exact_column_and_exact_cell,
     exact_column_and_partial_cell,
@@ -186,7 +186,7 @@ if __name__ == "__main__":
 
     # Single config dictionary that works for all techniques
     config = {
-        "evaluation_technique": EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
+        "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
         "db_params": {
             "dbms": DBMS.SQLITE,
             "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",

@@ -6,7 +6,7 @@ import os
 
 from src.core.database.database_handler import DBMS
 from src.core.model_manager import OpenAIModel
-from src.evaluation import Evaluation, EvaluationTechnique
+from src.metrics import Evaluation, EvaluationTechnique
 
 
 def calculate_metrics(
