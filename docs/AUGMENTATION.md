@@ -142,16 +142,6 @@ The script produces several JSON files under `rule_outputs/jq_augmentation/`:
 
 ---
 
-## Contributing
-
-> *Instructions for contributing to the repository*
-
-* Fork the repo
-* Create a feature branch
-* Submit a pull request
-
----
-
 ## License
 
 MIT License
