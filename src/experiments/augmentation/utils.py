@@ -1,6 +1,6 @@
 from src.core.logger.logger import Logger
 from src.core.database.database_handler import DBMS
-from src.evaluation import Evaluation, EvaluationTechnique
+from src.metrics import Evaluation, EvaluationTechnique
 from src.core.model_manager import OpenAIModel
 import re
 

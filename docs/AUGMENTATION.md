@@ -139,6 +139,27 @@ where `<technique>` can be:
 
 ## Experiments
 
+### JQE
+
+#### Experiments 1 & 2: Connectivity and Cyclicity
+
+The full set of expansion queries is stored in:
+
+```
+data/rule_outputs/jq_augmentation/aug_log/augmentation_log.pickle
+```
+
+To compute the connectivity and cyclicity values for the expansion set (derived from BIRD’s dev set), run the following command:
+
+```bash
+python src/experiments/augmentation/join_stats.py
+```
+
+This will generate two CSV files under `experiments/augmentation/`:
+
+* `augmented_join_details.csv` — details for the augmented queries  
+* `original_join_details.csv` — details for the original queries  
+
 > *Section to describe experiments conducted using JQE and TQA*
 
 ### Experiment 1: .....
