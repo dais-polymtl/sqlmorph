@@ -57,7 +57,7 @@ Run the main augmentation script:
 python -m src.augmentation.jq_graph_augmentation.main <db_id> <num_tables>
 ```
 
-* `db_id`: Choose one of BIRD’s dev databases:
+* **`db_id`**: Select one of BIRD’s dev databases:
 
   ```
   california_schools, card_games, codebase_community, debit_card_specializing, 
@@ -65,10 +65,9 @@ python -m src.augmentation.jq_graph_augmentation.main <db_id> <num_tables>
   thrombosis_prediction, toxicology
   ```
 
-* `num_tables`: Number of tables to include in the new queries.
-
+* **`num_tables`**: Number of tables to include in the generated queries.
   * Must be at least `2`.
-  * Cannot exceed the maximum for the database (see `rule_inputs/jq_augmentation/<db_id>:jq_graphs_n_tables.pkl`).
+  * Cannot exceed the maximum allowed for the database (see `rule_inputs/jq_augmentation/<db_id>:jq_graphs_n_tables.pkl`).
 
 **Example:**
 
@@ -76,7 +75,7 @@ python -m src.augmentation.jq_graph_augmentation.main <db_id> <num_tables>
 python -m src.augmentation.jq_graph_augmentation.main european_football_2 4
 ```
 
-* **Optional:** Use `-gf` to generate queries using graph statistics:
+* **Optional:** Add `-gf` to generate queries based on graph statistics:
 
 ```bash
 python -m src.augmentation.jq_graph_augmentation.main european_football_2 4 -gf
@@ -84,34 +83,57 @@ python -m src.augmentation.jq_graph_augmentation.main european_football_2 4 -gf
 
 #### Output
 
-The script produces several JSON files under `rule_outputs/jq_augmentation/`:
+The script produces several JSON and SQL files under `data/rule_outputs/jq_augmentation/`:
 
-1. **Filtered Queries:**
+1. **Filtered Queries (Unique Expansions):**
 
    ```
    filtered/query_first/db_id_(num_tables)t_qf_filtered_aug.json
    filtered/query_first/db_id_(num_tables)t_qf_filtered_ori.json
+   # Same naming for .sql files (including the queries for db_id).
    ```
 
-   * `*_aug.json`: New augmented queries.
+   * `*_aug.json`: Augmented queries.
    * `*_ori.json`: Original queries.
 
-2. **Discarded Queries:**
+2. **Discarded Queries (Duplicate Isomorphics):**
 
    ```
-   discarded/query_first/db_id_(num_tables)_qf_discarded_aug.json
-   discarded/query_first/db_id_(num_tables)_qf_discarded_ori.json
+   discarded/query_first/db_id_(num_tables)t_qf_discarded_aug.json
+   discarded/query_first/db_id_(num_tables)t_qf_discarded_ori.json
+   # Same naming for .sql files (including the queries for db_id).
    ```
 
-   * Queries that were **skipped** because they were duplicates or too similar to existing queries.
+   * Queries **skipped** because they were duplicates or structurally too similar to existing queries.
+
+---
 
 ### 2. Textual Query Augmentation (TQA)
 
-> *Section to describe TQA workflow, scripts, and commands*
+The script splits the data into train, dev, and test sets using K-Means clustering over databases with respect to node distribution.  
 
-* **Generating augmented NL queries:**
-* **Filtering / validation:**
-* **Output format:**
+Run the script:
+
+```bash
+python src/augmentation/main.py
+```
+
+#### Output
+
+The script saves JSON and SQL files under `data/lt_elimination/split/`, where `split` is one of `train`, `dev`, or `test`.  
+
+Each split contains files named as follows:
+
+```
+split_<technique>_queries.json
+split_<technique>_queries.sql
+```
+
+where `<technique>` can be:
+* `syn_rep` → Synonym Replacement  
+* `backtrans` → Backtranslation  
+* `context_aug` → Contextual Augmentation  
+
 
 ---
 
