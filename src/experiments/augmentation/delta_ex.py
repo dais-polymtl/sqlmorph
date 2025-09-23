@@ -27,12 +27,7 @@ def turn_results_into_csv(results: List[Dict], system_name: str, mode: str) -> N
     """
     Save a list of result dictionaries into a CSV file for a given system and mode.
     """
-    output_dir = (
-        Path(os.getenv("DATA_FOLDER"))
-        / "experiments"
-        / "augmentation"
-        / "experiment_inputs"
-    )
+    output_dir = Path(os.getenv("DATA_FOLDER")) / "experiments" / "augmentation"
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{system_name}_{mode}_results.csv"
 
@@ -241,12 +236,7 @@ def calculate_delta_ex(system_name: str) -> None:
     """
     Compute the delta in execution accuracy (aug - dev) per example.
     """
-    base_dir = (
-        Path(os.getenv("DATA_FOLDER"))
-        / "experiments"
-        / "augmentation"
-        / "experiment_inputs"
-    )
+    base_dir = Path(os.getenv("DATA_FOLDER")) / "experiments" / "augmentation"
     aug_path = base_dir / f"{system_name}_aug_results.csv"
     dev_path = base_dir / f"{system_name}_dev_results.csv"
     out_path = base_dir / f"{system_name}_delta_ex_results.csv"

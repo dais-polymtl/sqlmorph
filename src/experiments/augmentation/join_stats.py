@@ -172,12 +172,7 @@ def join_details(
                         )
                     )
 
-    output_dir = (
-        Path(os.getenv("DATA_FOLDER"))
-        / "experiments"
-        / "augmentation"
-        / "experiment_inputs"
-    )
+    output_dir = Path(os.getenv("DATA_FOLDER")) / "experiments" / "augmentation"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     fields = [
@@ -248,53 +243,20 @@ def read_queries_w_jqg():
     return pruned_aug, generated_aug
 
 
-def grouping_original_jqgs():
-    input_folder = (
-        Path(os.getenv("DATA_FOLDER"))
-        / "experiments"
-        / "augmentation"
-        / "experiment_inputs"
-    )
-    original_jqgs = input_folder / "original_join_details.csv"
-    if not original_jqgs.exists():
-        logger.log("error", f"Original join details file not found: {original_jqgs}")
-        return
-    # we will group queries by number of nodes and edges
-    grouped = {}
-    with open(original_jqgs, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            num_nodes = int(row["num_nodes"])
-            num_edges = int(row["num_edges"])
-            key = (num_nodes, num_edges)
-            if key not in grouped:
-                grouped[key] = []
-            grouped[key].append(row)
-
-    # Display grouped queries
-    for (num_nodes, num_edges), queries in grouped.items():
-        logger.log(
-            "info",
-            f"Group ({num_nodes} nodes, {num_edges} edges): {len(queries)} queries",
-        )
-
-
 def main():
     """
     Main function to execute the join details collection and logging.
     """
-    # pruned_aug, generated_aug = read_queries_w_jqg()
-    # print(f"Pruned Augmentation Entries: {len(pruned_aug)}")
-    # print(f"Generated Augmentation Entries: {len(generated_aug)}")
-    # print(f"Total Augmentation Entries: {len(pruned_aug) + len(generated_aug)}")
-    # if not pruned_aug or not generated_aug:
-    #     logger.log("error", "No augmentation data found.")
-    #     return
+    pruned_aug, generated_aug = read_queries_w_jqg()
+    print(f"Pruned Augmentation Entries: {len(pruned_aug)}")
+    print(f"Generated Augmentation Entries: {len(generated_aug)}")
+    print(f"Total Augmentation Entries: {len(pruned_aug) + len(generated_aug)}")
+    if not pruned_aug or not generated_aug:
+        logger.log("error", "No augmentation data found.")
+        return
 
-    grouping_original_jqgs()
-
-    # join_details(pruned_aug, generated_aug)
-    # logger.log("info", "Join details collection completed.")
+    join_details(pruned_aug, generated_aug)
+    logger.log("info", "Join details collection completed.")
 
 
 if __name__ == "__main__":
