@@ -188,3 +188,29 @@ def mac_accuracy_by_joins() -> Dict[int, float]:
             grouped.setdefault(join_count, []).append(r["ex"])
 
     return {jc: np.mean(accs) for jc, accs in grouped.items()}
+
+
+if __name__ == "__main__":
+    base = Path(os.getenv("DATA_FOLDER"))
+    output_path = base / "experiments/augmentation/join_sampling_results.csv"
+    din_acc = din_accuracy_by_joins()
+    chess_acc = chess_accuracy_by_joins()
+    mac_acc = mac_accuracy_by_joins()
+
+    all_joins = sorted(
+        set(din_acc.keys()) | set(chess_acc.keys()) | set(mac_acc.keys())
+    )
+
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["num_joins", "din_accuracy", "chess_accuracy", "mac_accuracy"])
+        for jc in all_joins:
+            writer.writerow(
+                [
+                    jc,
+                    f"{din_acc.get(jc, 0):.4f}",
+                    f"{chess_acc.get(jc, 0):.4f}",
+                    f"{mac_acc.get(jc, 0):.4f}",
+                ]
+            )
+    logger.log("info", f"Join sampling results saved to {output_path}")
