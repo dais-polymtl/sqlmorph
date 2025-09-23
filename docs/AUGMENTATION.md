@@ -157,47 +157,49 @@ python src/experiments/augmentation/join_stats.py
 
 This will generate two CSV files under `experiments/augmentation/`:
 
-* `augmented_join_details.csv` — details for the augmented queries  
-* `original_join_details.csv` — details for the original queries  
+* `augmented_join_details.csv` — details for the augmented queries, including the average degree for each query and a boolean indicating whether the query contains cycles.
+* `original_join_details.csv` — details for the original queries, including the average degree for each query and a boolean indicating whether the query contains cycles.
 
-> *Section to describe experiments conducted using JQE and TQA*
+#### Experiment 3: Systems Performance - Unique Expansions
 
-### Experiment 1: .....
-* **Experiment setup:**
-* **Databases used:**
-* **Metrics:**
+Three SOTA systems were evaluated on the 58 unique expansion queries derived from the BIRD dev set: CHESS, DIN-SQL, and MAC-SQL. Their outputs for this experiment are stored under:
 
-  * Execution accuracy
-  * Exact match
-  * Other evaluation metrics
-* **Scripts to reproduce experiments:**
+```
+data/experiments/system/
+```
 
-### Experiment 2: .....
-* **Experiment setup:**
-* **Databases used:**
-* **Metrics:**
+where `system` is one of `CHESS`, `DIN-SQL`, or `MAC-SQL`.
 
-  * Execution accuracy
-  * Exact match
-  * Other evaluation metrics
-* **Scripts to reproduce experiments:**
+To calculate the scores of the systems on the original pre-expansion queries, the unique expansions, and the variation of Exact Match (Delta EX = EX_exp - EX_ori), run:
 
-### Experiment 3: .....
-* **Experiment setup:**
-* **Databases used:**
-* **Metrics:**
+```bash
+python src/experiments/augmentation/delta_ex.py
+```
 
-  * Execution accuracy
-  * Exact match
-  * Other evaluation metrics
-* **Scripts to reproduce experiments:**
+This produces two types of CSV files under `data/experiments/augmentation/`:
+
+1. **`system_mode_results.csv`**  
+   * `mode` = `aug` (expanded) or `dev` (original) queries  
+   * `system` = CHESS, DIN-SQL, MAC-SQL  
+   * Stores the system results on both the original dev set and the unique expansions.
+
+2. **`system_delta_ex_results.csv`**  
+   * Contains the Delta EX values for each unique expansion query.
+
+#### Experiment 3: Systems Performance - Sampled Expansions
+
+The same three SOTA systems—`CHESS`, `DIN-SQL`, and `MAC-SQL`—were evaluated on the 408 sampled queries from the full expansion set. Their outputs for this experiment are stored under:
+
+```
+data/experiments/system/
+````
+
+where `system` is one of `CHESS`, `DIN-SQL`, or `MAC-SQL`.
+
+To generate the results in the file `data/experiments/join_sampling_results.csv`, run:
+
+```bash
+python src/experiments/augmentation/join_sampling_results.py
+````
 
 ---
-
-## Results
-
-> *Section to present results of JQE and TQA experiments*
-
-* **Summary tables:**
-* **Analysis and observations:**
-* **Visualizations (if any):**
