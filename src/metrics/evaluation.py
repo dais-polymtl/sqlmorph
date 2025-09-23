@@ -1,6 +1,8 @@
+import argparse
 import enum
 import json
 import os
+import sys
 from datetime import datetime
 from typing import Any
 
@@ -161,44 +163,156 @@ class Evaluation:
         )
 
 
-if __name__ == "__main__":
-    # Example usage
-    predicted_sql = "SELECT sub.MailStreet, sub.School, sub.MailCity, sub.MailState, sub.FRPM FROM (SELECT T2.MailStreet AS MailStreet, T2.School AS School, T2.MailCity AS MailCity, T2.MailState AS MailState, T1.`FRPM Count (K-12)` AS FRPM, T2.County AS County, T2.District AS District, T2.Zip AS Zip, T2.Phone AS Phone FROM frpm AS T1 JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY FRPM DESC LIMIT 9) AS sub ORDER BY sub.FRPM DESC LIMIT 5"
-    ground_truth_sql = "SELECT T2.MailStreet FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T1.`FRPM Count (K-12)` DESC LIMIT 1"
+def load_config_from_env():
+    """Load configuration from environment variables set by metrics_config.sh"""
 
-    predicted_sql = """
-    SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
-    """
-    ground_truth_sql = """
-    SELECT T1.Phone
-    FROM schools AS T1 
-    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
-    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 10;
-    """
+    # Get evaluation technique
+    eval_technique_str = os.environ.get("EVAL_TECHNIQUE")
+    if not eval_technique_str:
+        raise ValueError(
+            "EVAL_TECHNIQUE environment variable is required. Please source metrics_config.sh"
+        )
 
-    db_name = "california_schools"
+    try:
+        eval_technique = EvaluationTechnique(eval_technique_str)
+    except ValueError:
+        logger.log("error", "INVALID_EVAL_TECHNIQUE", {"technique": eval_technique_str})
+        raise ValueError(f"Invalid evaluation technique: {eval_technique_str}")
 
-    # Single config dictionary that works for all techniques
+    # Get DBMS type
+    dbms_str = os.environ.get("DBMS")
+    if not dbms_str:
+        raise ValueError(
+            "DBMS environment variable is required. Please source metrics_config.sh"
+        )
+
+    try:
+        dbms = getattr(DBMS, dbms_str.upper())
+    except AttributeError:
+        logger.log("error", "INVALID_DBMS", {"dbms": dbms_str})
+        raise ValueError(f"Invalid DBMS: {dbms_str}")
+
+    # Get database path
+    db_path = os.environ.get("DB_PATH")
+    if not db_path:
+        raise ValueError(
+            "DB_PATH environment variable is required. Please source metrics_config.sh"
+        )
+
+    # Get embedding model
+    embedding_model_str = os.environ.get("EMBEDDING_MODEL")
+    if not embedding_model_str:
+        raise ValueError(
+            "EMBEDDING_MODEL environment variable is required. Please source metrics_config.sh"
+        )
+
+    try:
+        embedding_model = getattr(OpenAIModel, embedding_model_str)
+    except AttributeError:
+        logger.log("error", "INVALID_EMBEDDING_MODEL", {"model": embedding_model_str})
+        raise ValueError(f"Invalid embedding model: {embedding_model_str}")
+
+    # Get logs directory
+    logs_dir_path = os.environ.get("LOGS_DIR_PATH")
+    if not logs_dir_path:
+        raise ValueError(
+            "LOGS_DIR_PATH environment variable is required. Please source metrics_config.sh"
+        )
+
+    # Get penalize extra columns setting
+    penalize_extra_columns_str = os.environ.get("PENALIZE_EXTRA_COLUMNS", "true")
+    penalize_extra_columns = penalize_extra_columns_str.lower() == "true"
+
+    # Get enable log setting
+    enable_log_str = os.environ.get("ENABLE_LOG", "false")
+    enable_log = enable_log_str.lower() == "true"
+
+    # Build configuration
     config = {
-        "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+        "evaluation_technique": eval_technique,
         "db_params": {
-            "dbms": DBMS.SQLITE,
-            "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
+            "dbms": dbms,
+            "db_path": db_path,
         },
-        "penalize_extra_columns": True,
-        "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
-        "logs_dir_path": "data/evaluation_outputs/",
+        "penalize_extra_columns": penalize_extra_columns,
+        "embedding_model": embedding_model,
+        "logs_dir_path": logs_dir_path,
+        "enable_log": enable_log,
     }
 
-    exact_evaluator = Evaluation(config)
-    res = exact_evaluator.run_evaluation(
-        predicted_sql=predicted_sql, ground_truth_sql=ground_truth_sql, log=True
+    return config
+
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="SQL Query Evaluation Tool")
+    parser.add_argument("--predicted-sql", required=True, help="Predicted SQL query")
+    parser.add_argument(
+        "--ground-truth-sql", required=True, help="Ground truth SQL query"
     )
-    print("Semantic Evaluation Results:")
-    print(f"Metrics: {res['metrics']}, Latency: {res['latency']}")
+
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    # Check if CLI arguments are provided
+    if len(sys.argv) > 1:
+        # CLI mode
+        args = parse_args()
+
+        # Load configuration from environment variables (set by metrics_config.sh)
+        config = load_config_from_env()
+
+        # Create evaluator
+        evaluator = Evaluation(config)
+
+        # Run evaluation
+        res = evaluator.run_evaluation(
+            predicted_sql=args.predicted_sql,
+            ground_truth_sql=args.ground_truth_sql,
+            log=config["enable_log"],
+        )
+
+        print("Evaluation Results:")
+        if res and "metrics" in res:
+            print(f"Metrics: {res['metrics']}")
+        if res and "latency" in res:
+            print(f"Latency: {res['latency']}")
+
+    else:
+        # Example usage
+        predicted_sql = """
+        SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
+        FROM satscores T1 
+        JOIN schools T3 ON T1.cds = T3.CDSCode 
+        WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
+        ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
+        LIMIT 10;
+        """
+
+        ground_truth_sql = """
+        SELECT T1.Phone
+        FROM schools AS T1 
+        INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
+        ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
+        LIMIT 10;
+        """
+
+        db_name = "california_schools"
+
+        config = {
+            "evaluation_technique": EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+            "db_params": {
+                "dbms": DBMS.SQLITE,
+                "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
+            },
+            "penalize_extra_columns": True,
+            "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
+            "logs_dir_path": "data/evaluation_outputs/",
+        }
+
+        evaluator = Evaluation(config)
+        res = evaluator.run_evaluation(predicted_sql, ground_truth_sql, log=True)
+
+        print("Semantic Evaluation Results:")
+        print(f"Metrics: {res['metrics']}, Latency: {res['latency']}")
