@@ -136,6 +136,10 @@ def match_rows(context: dict):
     # Phase B: Partial row matching using Jaccard similarity
     partial_matched_cells = 0
 
+    # Sort remaining indices to make partial matching deterministic
+    remaining_gt_indices.sort()
+    remaining_pred_indices.sort()
+
     while remaining_gt_indices and remaining_pred_indices:
         best_similarity = 0
         best_gt_idx = -1
