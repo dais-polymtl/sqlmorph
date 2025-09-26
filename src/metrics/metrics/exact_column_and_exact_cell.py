@@ -79,8 +79,8 @@ def match_columns(context: dict):
     gt_cols = context["gt_cols"]
     pred_cols = context["pred_cols"]
 
-    # Find intersection of columns
-    common_cols = set(gt_cols) & set(pred_cols)
+    # Find intersection of columns and sort lexicographically for deterministic behavior
+    common_cols = sorted(set(gt_cols) & set(pred_cols))
 
     # Check if there are no common columns
     if len(common_cols) == 0:
