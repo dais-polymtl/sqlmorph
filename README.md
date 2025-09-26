@@ -1,4 +1,4 @@
-# text-to-sql-coverage
+# SQLMorph: Query Mutation for Robust Text-to-SQL Evaluation
 
 ## Setup Environment
 
@@ -13,7 +13,7 @@ cd text-to-sql-coverage
 
 ### 2. Installation
 
-You will first need to install `uv` to manage dependencies. Follow the instructions at the official [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/). Once `uv` is installed, run the following command to install all dependencies, including optional ones for experiments:
+You will first need to install `uv` to manage dependencies. Follow the instructions at the official [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/). Once `uv` is installed, run the following command to install all dependencies, including optional ones for development:
 
 ```bash
 uv sync --all-extras
@@ -27,15 +27,10 @@ If you're contributing or developing code, install the `pre-commit` hooks for au
 uv run pre-commit install
 ```
 
----
-
-
 ## Documentation
 
 * [Augmentation](docs/AUGMENTATION.md)
 * [Metrics](docs/METRICS.md)
-
----
 
 ## Citation
 
