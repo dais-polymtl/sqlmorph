@@ -290,6 +290,10 @@ def match_rows(context):
     # Perform partial matching on remaining rows using greedy strategy
     partial_matched_cells = 0.0
 
+    # Sort remaining rows to make partial matching deterministic
+    remaining_gt_rows.sort()
+    remaining_pred_rows.sort()
+
     while remaining_gt_rows and remaining_pred_rows:
         best_similarity = 0
         best_gt_idx = -1
