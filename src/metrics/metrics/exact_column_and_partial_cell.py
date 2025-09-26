@@ -203,9 +203,9 @@ def match_rows(context: dict):
                     for gt_val, pred_val in zip(gt_row, pred_row)
                     if gt_val == pred_val
                 )
-                similarity = matching_cells / len(
-                    common_cols
-                )  # Normalize by number of columns
+                similarity = (
+                    matching_cells / len(common_cols) if len(common_cols) > 0 else 0
+                )
 
                 if similarity > best_similarity:
                     best_similarity = similarity
