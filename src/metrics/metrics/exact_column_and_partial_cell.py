@@ -1,7 +1,7 @@
 import time
 from collections import Counter
 
-from src.core.database.database_handler import DatabaseHandler, DBMS
+from src.core.database.database_handler import DatabaseHandler
 from src.core.logger import Logger
 
 logger = Logger(__name__)
@@ -227,11 +227,7 @@ def match_rows(context: dict):
             # No more matches possible, break out of loop
             break
 
-    logger.log(
-        "debug", f"Phase 2 complete: {partial_matched_cells} cells from partial matches"
-    )
-
-    # Total matched cells = exact matches + partial matches
+    # Total matched cells
     total_matched_cells = exact_matched_cells + partial_matched_cells
 
     context.update(
@@ -319,47 +315,3 @@ def run_evaluation_pipeline(
     context["latency"] = time.time() - start_time
 
     return context
-
-
-if __name__ == "__main__":
-    # ad-hoc example to test the evaluation technique! check out evaluation_metrics.py for the main entry point
-
-    # input
-    predicted_sql = """
-    SELECT T3.Phone, T3.City, T3.State, T3.MailStreet
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
-    """
-    ground_truth_sql = """
-    SELECT T1.Phone
-    FROM schools AS T1 
-    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
-    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 10;
-    """
-
-    # config
-    db_params = {
-        "dbms": DBMS.SQLITE,
-        "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
-    }
-
-    penalize_extra_pred_cols = True
-
-    context = run_evaluation_pipeline(
-        predicted_sql=predicted_sql,
-        ground_truth_sql=ground_truth_sql,
-        db_params=db_params,
-        penalize_extra_pred_cols=penalize_extra_pred_cols,
-    )
-
-    # print evaluation results
-    metrics = context.get("metrics", {})
-    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
-    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
-    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
-    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
-    print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")

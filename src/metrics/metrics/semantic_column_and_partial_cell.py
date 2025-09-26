@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cosine
 
-from src.core.database import DatabaseHandler, DBMS
+from src.core.database import DatabaseHandler
 from src.core.logger import Logger
 from src.core.model_manager import (
     ModelManager,
@@ -266,10 +266,6 @@ def match_rows(context):
             matched_row_counts[row] = matches
             exact_matched_cells += matches * len(matched_cols)
 
-    logger.log(
-        "debug", f"Phase 1 complete: {exact_matched_cells} cells from exact matches"
-    )
-
     # Phase 2: Partial Row Matching for remaining unmatched rows
     # Create lists of remaining unmatched rows
     remaining_gt_rows = []
@@ -327,10 +323,6 @@ def match_rows(context):
         else:
             # No more matches possible, break out of loop
             break
-
-    logger.log(
-        "debug", f"Phase 2 complete: {partial_matched_cells} cells from partial matches"
-    )
 
     # Total matched cells = exact matches + partial matches
     total_matched_cells = exact_matched_cells + partial_matched_cells
@@ -439,48 +431,3 @@ def run_evaluation_pipeline(
     context["latency"] = time.time() - start_time
 
     return context
-
-
-if __name__ == "__main__":
-    # ad-hoc example to test the evaluation technique! check out evaluation_metrics.py for the main entry point
-
-    # input
-    predicted_sql = """
-    SELECT T3.Phone AS P, T3.City AS SHA
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
-    """
-    ground_truth_sql = """
-    SELECT T1.Phone, T1.City, T1.State, T1.MailStreet
-    FROM schools AS T1 
-    INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds 
-    ORDER BY CAST(T2.NumGE1500 AS REAL) / T2.NumTstTakr DESC 
-    LIMIT 10;
-    """
-
-    # config
-    db_params = {
-        "dbms": DBMS.SQLITE,
-        "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
-    }
-    embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
-    penalize_extra_pred_cols = True
-
-    context = run_evaluation_pipeline(
-        predicted_sql=predicted_sql,
-        ground_truth_sql=ground_truth_sql,
-        db_params=db_params,
-        embedding_model=embedding_model,
-        penalize_extra_pred_cols=penalize_extra_pred_cols,
-    )
-
-    # print evaluation results
-    metrics = context.get("metrics", {})
-    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
-    print(f"EXP (Execution Precision): {metrics.get('EXP', 0.0):.4f}")
-    print(f"EXR (Execution Recall): {metrics.get('EXR', 0.0):.4f}")
-    print(f"F1 Score: {metrics.get('F1', 0.0):.4f}")
-    print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
