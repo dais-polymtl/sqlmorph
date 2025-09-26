@@ -91,10 +91,9 @@ def match_rows(context: dict):
     pred_cols = context["pred_cols"]
     penalize_extra_pred_cols = context["penalize_extra_pred_cols"]
 
-    # Step 1: Convert rows to cell token sets (col_name=value)
+    # Step 1: Convert rows to cell token sets (values only - column agnostic)
     def row_to_cell_tokens(row, columns):
-        """Convert a row to a set of cell tokens in the form 'col_name=value'"""
-        return set(f"{col}={val}" for col, val in zip(columns, row))
+        return set(str(val) for val in row)
 
     gt_cell_sets = [row_to_cell_tokens(row, gt_cols) for row in gt_rows]
     pred_cell_sets = [row_to_cell_tokens(row, pred_cols) for row in pred_rows]
