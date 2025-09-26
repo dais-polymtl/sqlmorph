@@ -1,5 +1,5 @@
 import time
-from src.core.database.database_handler import DatabaseHandler, DBMS
+from src.core.database.database_handler import DatabaseHandler
 from src.core.logger import Logger
 
 logger = Logger(__name__)
@@ -88,40 +88,3 @@ def run_evaluation_pipeline(
     context["latency"] = time.time() - start_time
 
     return context
-
-
-if __name__ == "__main__":
-    # Example usage
-    predicted_sql = """
-    SELECT T3.Phone
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
-    """
-    ground_truth_sql = """
-    SELECT T3.Phone
-    FROM satscores T1 
-    JOIN schools T3 ON T1.cds = T3.CDSCode 
-    WHERE T1.NumTstTakr IS NOT NULL AND T1.NumGE1500 IS NOT NULL 
-    ORDER BY (T1.NumGE1500 * 1.0 / T1.NumTstTakr) DESC 
-    LIMIT 10;
-    """
-
-    db_params = {
-        "dbms": DBMS.SQLITE,
-        "db_path": "data/benchmarks/Bird/dev_databases/california_schools/california_schools.sqlite",
-    }
-
-    context = run_evaluation_pipeline(
-        predicted_sql=predicted_sql,
-        ground_truth_sql=ground_truth_sql,
-        db_params=db_params,
-    )
-
-    metrics = context.get("metrics", {})
-    print("=================== Execution Accuracy Results ===================")
-    print(f"EX (Binary Execution Accuracy): {metrics.get('EX', 0)}")
-    print(f"Time taken: {context.get('latency', 0.0):.2f} seconds")
-    print("==================================================================")
