@@ -124,18 +124,18 @@ source scripts/run_metrics_experiment1.sh
 
 ### Experiment 2: Controlled Error Sensitivity
 
-1- Single error mutants 
+1- Single Error Mutants 
 ```bash
 bash scripts/source scripts/run_metrics_experiment2_1.sh
 ```
-2- Multi error mutants 
+2- Multi Error Mutants 
 
 ```bash
 bash scripts/source scripts/run_metrics_experiment2_2.sh
 ```
 ---
 
-### Experiment 3: Model Sensitivity
+### Experiment 3: System-Level Comparison on Shared Failures
 
 ```bash
 source scripts/run_metrics_experiment3.sh

@@ -226,17 +226,20 @@ def print_summary_statistics(csv_path: str, techniques: list):
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    DATA = "data/evaluation/experiments/controlled_error_sensitivity/manual_mutants"
-    csv_path = f"{DATA}/mutants_v1_evaluation_results_PARTIAL.csv"
+    DATA = "data/metrics/experiments/table_shape_sensitivity"
+
+    experiment_name = "mutants_v1_evaluation_results_all_with_no_penalize-2025-09-26"
+    csv_path = f"{DATA}/{experiment_name}.csv"
     json_path = f"{DATA}/mutants_v1.json"
-    output_dir = f"{DATA}/plots_TESTPARTIAL_2/"
+    output_dir = f"{DATA}/plots_{experiment_name}/"
 
     techniques = [
-        "FREE_COLUMN_AND_PARTIAL_CELL",
         "EXACT_COLUMN_AND_EXACT_CELL",
         "EXACT_COLUMN_AND_PARTIAL_CELL",
         "SEMANTIC_COLUMN_AND_EXACT_CELL",
         "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+        "FREE_COLUMN_AND_PARTIAL_CELL",
+        # "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
     ]
 
     # Create output directory if it doesn't exist
