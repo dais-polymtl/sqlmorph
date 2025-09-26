@@ -245,12 +245,11 @@ def match_rows(context):
     g_rows = len(gt_rows)
     p_rows = len(pred_rows)
     g_cells = g_rows * len(gt_cols)
-    num_matched_cols = len(matched_cols)
 
     if penalize_extra_pred_cols:
         p_cells = p_rows * len(pred_cols)
     else:
-        p_cells = p_rows * num_matched_cols
+        p_cells = p_rows * len(matched_cols)
 
     # Phase 1: Exact Row Matching using efficient frequency-based approach
     gt_counter = Counter(gt_projected_rows)
@@ -265,7 +264,7 @@ def match_rows(context):
             # Number of matches is the minimum count between gt and pred
             matches = min(gt_counter[row], pred_counter[row])
             matched_row_counts[row] = matches
-            exact_matched_cells += matches * num_matched_cols
+            exact_matched_cells += matches * len(matched_cols)
 
     logger.log(
         "debug", f"Phase 1 complete: {exact_matched_cells} cells from exact matches"
@@ -306,7 +305,7 @@ def match_rows(context):
                     if gt_val == pred_val
                 )
                 similarity = (
-                    matching_cells / num_matched_cols if num_matched_cols > 0 else 0
+                    matching_cells / len(matched_cols) if len(matched_cols) > 0 else 0
                 )  # Normalize by number of matched columns
 
                 if similarity > best_similarity:
@@ -317,7 +316,7 @@ def match_rows(context):
         # If we found a match with some similarity, record it and remove the rows
         if best_similarity > 0:
             # Partial match contributes fractional cells based on similarity
-            partial_matched_cells += best_similarity * num_matched_cols
+            partial_matched_cells += best_similarity * len(matched_cols)
             # Remove the matched rows from consideration
             remaining_gt_rows.pop(best_gt_idx)
             remaining_pred_rows.pop(best_pred_idx)
@@ -338,7 +337,7 @@ def match_rows(context):
             "gt_projected_rows": gt_projected_rows,
             "pred_projected_rows": pred_projected_rows,
             "matched_rows": (
-                exact_matched_cells // num_matched_cols if num_matched_cols > 0 else 0
+                exact_matched_cells // len(matched_cols) if len(matched_cols) > 0 else 0
             ),  # For backward compatibility
             "matched_cells": total_matched_cells,
             "exact_matched_cells": exact_matched_cells,
