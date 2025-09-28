@@ -177,13 +177,12 @@ if __name__ == "__main__":
         "src/experiments/metrics/table_shape_sensitivity/mutants_v1.json"
     )
 
-    experiment_name = "mutants_v1_evaluation_results_all_with_no_penalize-2025-09-26"
+    experiment_name = "mutantsV1_eval_without_penalty-2025-09-27"
     output_csv_path = f"{DATA}/{experiment_name}.csv"
     log_dir = f"{DATA}/logs/{experiment_name}/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
 
-    # Create logs directory if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
 
     techniques = [
@@ -191,7 +190,7 @@ if __name__ == "__main__":
         EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
-        EvaluationTechnique.FREE_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
         # EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
     ]
 
