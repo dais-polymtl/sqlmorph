@@ -15,7 +15,7 @@ from src.metrics.metrics import (
     exact_column_and_partial_cell,
     semantic_column_and_exact_cell,
     semantic_column_and_partial_cell,
-    free_column_and_partial_cell,
+    no_column_and_partial_cell,
     unified_column_and_semantic_row,
 )
 from src.core.database.database_handler import DBMS
@@ -32,7 +32,7 @@ class EvaluationTechnique(enum.Enum):
     EXACT_COLUMN_AND_PARTIAL_CELL = "exact_column_and_partial_cell"
     SEMANTIC_COLUMN_AND_EXACT_CELL = "semantic_column_and_exact_cell"
     SEMANTIC_COLUMN_AND_PARTIAL_CELL = "semantic_column_and_partial_cell"
-    FREE_COLUMN_AND_PARTIAL_CELL = "free_column_and_partial_cell"
+    NO_COLUMN_AND_PARTIAL_CELL = "no_column_and_partial_cell"
     UNIFIED_COLUMN_AND_SEMANTIC_ROW = "unified_column_and_semantic_row"
 
 
@@ -100,13 +100,12 @@ class Evaluation:
             )
         elif (
             self.config["evaluation_technique"]
-            == EvaluationTechnique.FREE_COLUMN_AND_PARTIAL_CELL
+            == EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL
         ):
-            context = free_column_and_partial_cell.run_evaluation_pipeline(
+            context = no_column_and_partial_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
-                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
             )
         elif (
             self.config["evaluation_technique"]

@@ -89,7 +89,6 @@ def match_rows(context: dict):
     pred_rows = context["pred_rows"]
     gt_cols = context["gt_cols"]
     pred_cols = context["pred_cols"]
-    penalize_extra_pred_cols = context["penalize_extra_pred_cols"]
 
     # Step 1: Convert rows to cell token sets (values only - column agnostic)
     def row_to_cell_tokens(row, columns):
@@ -106,7 +105,6 @@ def match_rows(context: dict):
     exact_matched_cells = 0
     remaining_gt_indices = list(range(len(gt_cell_sets)))
     remaining_pred_indices = list(range(len(pred_cell_sets)))
-    matched_pairs_overlaps = []  # Track overlaps from matched pairs for lenient mode
 
     # Find exact matches
     gt_to_remove = []
@@ -118,7 +116,6 @@ def match_rows(context: dict):
                 # Exact match found
                 overlap_size = len(gt_cell_sets[gt_idx])
                 exact_matched_cells += overlap_size
-                matched_pairs_overlaps.append(overlap_size)
                 gt_to_remove.append(gt_idx)
                 pred_to_remove.append(pred_idx)
                 break  # 1-to-1 matching
@@ -167,7 +164,6 @@ def match_rows(context: dict):
         # If we found a match with some similarity, record it
         if best_similarity > 0:
             partial_matched_cells += best_intersection_size
-            matched_pairs_overlaps.append(best_intersection_size)
             remaining_gt_indices.remove(best_gt_idx)
             remaining_pred_indices.remove(best_pred_idx)
         else:
@@ -177,12 +173,8 @@ def match_rows(context: dict):
     # Total matched cells
     total_matched_cells = exact_matched_cells + partial_matched_cells
 
-    if penalize_extra_pred_cols:
-        # use all predicted tokens
-        p_cells = sum(len(cell_set) for cell_set in pred_cell_sets)
-    else:
-        # use only overlapping tokens from matched pairs
-        p_cells = sum(matched_pairs_overlaps)
+    # Always use total predicted cells
+    p_cells = sum(len(cell_set) for cell_set in pred_cell_sets)
 
     context.update(
         {
@@ -243,13 +235,11 @@ def run_evaluation_pipeline(
     predicted_sql: str,
     ground_truth_sql: str,
     db_params: dict,
-    penalize_extra_pred_cols: bool,
 ):
     context = {
         "db_params": db_params,
         "predicted_sql": predicted_sql,
         "ground_truth_sql": ground_truth_sql,
-        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "metrics": {},
         "has_error": False,
         "ex_is_one": False,
