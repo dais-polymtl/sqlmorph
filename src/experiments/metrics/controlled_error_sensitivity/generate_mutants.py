@@ -132,9 +132,9 @@ from sqlglot import parse_one, exp
 # ────────────────────────────────────────────────────────────────────────
 ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
-BIRD_DEV_JSON = ROOT / "data/benchmarks/Bird/bird_dev.json"
-OUT_DIR = ROOT / "data/evaluation/experiments/controlled_error_sensitivity"
-OUT_FILE = OUT_DIR / "single_operator_mutants.json"
+BIRD_DEV_JSON = "data/benchmarks/Bird/bird_dev.json"
+OUT_DIR = "data/evaluation/experiments/controlled_error_sensitivity"
+OUT_FILE = OUT_DIR + "/single_operator_mutants.json"
 MAX_DEPTH = 1  # Set this value to the desired max depth
 
 
