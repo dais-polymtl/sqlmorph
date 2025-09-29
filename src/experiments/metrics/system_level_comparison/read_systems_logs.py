@@ -279,14 +279,10 @@ def combine_all_data(
 
 
 if __name__ == "__main__":
-    ROOT = "/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage"
-    chess_directory = ROOT + "/data/evaluation/experiments/systems_evel_on_bird/chess"
-    din_sql_directory = (
-        ROOT + "/data/evaluation/experiments/systems_evel_on_bird/din-sql"
-    )
-    mac_sql_directory = (
-        ROOT + "/data/evaluation/experiments/systems_evel_on_bird/mac-sql"
-    )
+    ROOT_DIR = "data/metrics/experiments/system_level_comparison/"
+    chess_directory = ROOT_DIR + "chess"
+    din_sql_directory = ROOT_DIR + "din-sql"
+    mac_sql_directory = ROOT_DIR + "mac-sql"
 
     # Test individual functions
     chess_data = read_chess_data(chess_directory)
@@ -299,8 +295,5 @@ if __name__ == "__main__":
 
     # Combine all data
     all_data = combine_all_data(chess_directory, mac_sql_directory, din_sql_directory)
-    all_data.to_csv(
-        ROOT + "/data/metrics/experiments/system_level_comparison/systems_data.csv",
-        index=False,
-    )
+    all_data.to_csv(ROOT_DIR + "systems_data.csv", index=False)
     print("DONE!")

@@ -16,7 +16,7 @@ def calculate_metrics(
     technique: EvaluationTechnique,
     log_dir: str,
     embedding_model,
-    penalize_extra_columns: bool,
+    penalize_extra_pred_cols: bool,
 ) -> dict:
     """Calculate evaluation metrics for a predicted SQL against gold SQL"""
     config = {
@@ -25,7 +25,7 @@ def calculate_metrics(
             "dbms": DBMS.SQLITE,
             "db_path": str(db_path),
         },
-        "penalize_extra_columns": penalize_extra_columns,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "embedding_model": embedding_model,
         "logs_dir_path": log_dir,
     }
@@ -48,7 +48,7 @@ def evaluate_single_mutant(
     db_path: str,
     technique: EvaluationTechnique,
     log_dir: str,
-    penalize_extra_columns: bool,
+    penalize_extra_pred_cols: bool,
     embedding_model,
     timeout_seconds: int = 120,
 ) -> str:
@@ -64,7 +64,7 @@ def evaluate_single_mutant(
                 technique,
                 log_dir,
                 embedding_model,
-                penalize_extra_columns,
+                penalize_extra_pred_cols,
             ),
         )
         return result
@@ -81,7 +81,7 @@ def evaluate_mutants(
     databases_dir: str,
     log_dir: str,
     techniques: list,
-    penalize_extra_columns: bool,
+    penalize_extra_pred_cols: bool,
     embedding_model,
     output_csv_path: str = None,
     timeout_seconds: int = 120,
@@ -138,7 +138,7 @@ def evaluate_mutants(
                     technique=technique,
                     log_dir=log_dir,
                     embedding_model=embedding_model,
-                    penalize_extra_columns=penalize_extra_columns,
+                    penalize_extra_pred_cols=penalize_extra_pred_cols,
                     timeout_seconds=timeout_seconds,
                 )
 
@@ -177,13 +177,12 @@ if __name__ == "__main__":
         "src/experiments/metrics/table_shape_sensitivity/mutants_v1.json"
     )
 
-    experiment_name = "mutants_v1_evaluation_results_all_with_no_penalize-2025-09-26"
+    experiment_name = "mutantsV1_eval_without_penalty-2025-09-27"
     output_csv_path = f"{DATA}/{experiment_name}.csv"
     log_dir = f"{DATA}/logs/{experiment_name}/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
 
-    # Create logs directory if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
 
     techniques = [
@@ -191,13 +190,13 @@ if __name__ == "__main__":
         EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
-        EvaluationTechnique.FREE_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
         # EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
     ]
 
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
     timeout_seconds = 120  # Timeout for each single evaluation
-    penalize_extra_columns = False
+    penalize_extra_pred_cols = False
 
     print("Starting mutant evaluation...")
     print(f"Mutants file: {mutants_json_path}")
@@ -210,7 +209,7 @@ if __name__ == "__main__":
         databases_dir=databases_dir,
         log_dir=log_dir,
         techniques=techniques,
-        penalize_extra_columns=penalize_extra_columns,
+        penalize_extra_pred_cols=penalize_extra_pred_cols,
         embedding_model=embedding_model,
         output_csv_path=output_csv_path,
         timeout_seconds=timeout_seconds,
