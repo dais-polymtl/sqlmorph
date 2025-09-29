@@ -11,12 +11,12 @@ import pandas as pd
 
 from src.metrics.metrics import (
     execution_accuracy,
-    exact_column_and_exact_cell,
-    exact_column_and_partial_cell,
-    semantic_column_and_exact_cell,
-    semantic_column_and_partial_cell,
-    no_column_and_partial_cell,
-    unified_column_and_semantic_row,
+    exact_column_exact_cell,
+    exact_column_partial_cell,
+    semantic_column_exact_cell,
+    semantic_column_partial_cell,
+    no_column_partial_cell,
+    unified_column_semantic_row,
 )
 from src.core.database.database_handler import DBMS
 from src.core.logger import Logger
@@ -60,49 +60,49 @@ class Evaluation:
             self.config["evaluation_technique"]
             == EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL
         ):
-            context = exact_column_and_exact_cell.run_evaluation_pipeline(
+            context = exact_column_exact_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
-                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
+                penalize_extra_pred_cols=self.config["penalize_extra_pred_cols"],
             )
         elif (
             self.config["evaluation_technique"]
             == EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL
         ):
-            context = semantic_column_and_exact_cell.run_evaluation_pipeline(
+            context = semantic_column_exact_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
                 embedding_model=self.config["embedding_model"],
-                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
+                penalize_extra_pred_cols=self.config["penalize_extra_pred_cols"],
             )
         elif (
             self.config["evaluation_technique"]
             == EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL
         ):
-            context = exact_column_and_partial_cell.run_evaluation_pipeline(
+            context = exact_column_partial_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
-                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
+                penalize_extra_pred_cols=self.config["penalize_extra_pred_cols"],
             )
         elif (
             self.config["evaluation_technique"]
             == EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL
         ):
-            context = semantic_column_and_partial_cell.run_evaluation_pipeline(
+            context = semantic_column_partial_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
                 embedding_model=self.config["embedding_model"],
-                penalize_extra_pred_cols=self.config["penalize_extra_columns"],
+                penalize_extra_pred_cols=self.config["penalize_extra_pred_cols"],
             )
         elif (
             self.config["evaluation_technique"]
             == EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL
         ):
-            context = no_column_and_partial_cell.run_evaluation_pipeline(
+            context = no_column_partial_cell.run_evaluation_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
@@ -111,7 +111,7 @@ class Evaluation:
             self.config["evaluation_technique"]
             == EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW
         ):
-            context = unified_column_and_semantic_row.run_eval_pipeline(
+            context = unified_column_semantic_row.run_eval_pipeline(
                 predicted_sql=predicted_sql,
                 ground_truth_sql=ground_truth_sql,
                 db_params=self.config["db_params"],
@@ -219,8 +219,8 @@ def load_config_from_env():
         )
 
     # Get penalize extra columns setting
-    penalize_extra_columns_str = os.environ.get("PENALIZE_EXTRA_COLUMNS", "true")
-    penalize_extra_columns = penalize_extra_columns_str.lower() == "true"
+    penalize_extra_pred_cols_str = os.environ.get("PENALIZE_EXTRA_PRED_COLS", "true")
+    penalize_extra_pred_cols = penalize_extra_pred_cols_str.lower() == "true"
 
     # Get enable log setting
     enable_log_str = os.environ.get("ENABLE_LOG", "false")
@@ -233,7 +233,7 @@ def load_config_from_env():
             "dbms": dbms,
             "db_path": db_path,
         },
-        "penalize_extra_columns": penalize_extra_columns,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "embedding_model": embedding_model,
         "logs_dir_path": logs_dir_path,
         "enable_log": enable_log,
@@ -305,7 +305,7 @@ if __name__ == "__main__":
                 "dbms": DBMS.SQLITE,
                 "db_path": f"data/benchmarks/Bird/dev_databases/{db_name}/{db_name}.sqlite",
             },
-            "penalize_extra_columns": True,
+            "penalize_extra_pred_cols": True,
             "embedding_model": OpenAIModel.TEXT_EMBEDDING_3_SMALL,
             "logs_dir_path": "data/evaluation_outputs/",
         }
