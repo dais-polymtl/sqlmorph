@@ -16,6 +16,7 @@ def calculate_metrics(
     technique: EvaluationTechnique,
     log_dir: str,
     embedding_model,
+    penalize_extra_pred_cols: bool,
 ) -> dict:
     config = {
         "evaluation_technique": technique,
@@ -23,7 +24,7 @@ def calculate_metrics(
             "dbms": DBMS.SQLITE,
             "db_path": str(db_path),
         },
-        "penalize_extra_pred_cols": True,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
         "embedding_model": embedding_model,
         "logs_dir_path": log_dir,
     }
@@ -47,6 +48,7 @@ def evaluate_single_row(
     technique: EvaluationTechnique,
     log_dir: str,
     embedding_model,
+    penalize_extra_pred_cols: bool,
     timeout_seconds: int = 120,
 ) -> str:
     """Evaluate a single row with func_timeout for reliable timeout handling"""
@@ -62,6 +64,7 @@ def evaluate_single_row(
                 technique,
                 log_dir,
                 embedding_model,
+                penalize_extra_pred_cols,
             ),
         )
         return result
@@ -79,6 +82,7 @@ def evaluate_with_techniques(
     log_dir: str,
     techniques: list,
     embedding_model,
+    penalize_extra_pred_cols: bool,
     output_csv_path: str = None,
     timeout_seconds: int = 60,
     sampling_ratio=None,
@@ -182,6 +186,7 @@ def evaluate_with_techniques(
                 technique=technique,
                 log_dir=log_dir,
                 embedding_model=embedding_model,
+                penalize_extra_pred_cols=penalize_extra_pred_cols,
                 timeout_seconds=timeout_seconds,
             )
 
@@ -296,18 +301,22 @@ def sample_dataframe(
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    ROOT = "data/evaluation/experiments/systems_evel_on_bird"
+    experiment_name = "systems_data_with_metrics-with_penalty"
+
+    ROOT = "data/metrics/experiments/system_level_comparison"
     input_csv_path = ROOT + "/systems_data.csv"
-    output_csv_path = ROOT + "/systems_data_with_metrics.csv"
-    log_dir = ROOT + "/logs/"
+    output_csv_path = ROOT + f"/{experiment_name}.csv"
+    log_dir = ROOT + f"/logs/{experiment_name}/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
 
     techniques = [
         EvaluationTechnique.EXECUTION_ACCURACY,
         EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-        EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
     ]
 
     embedding_model = OpenAIModel.TEXT_EMBEDDING_3_SMALL
@@ -315,6 +324,7 @@ if __name__ == "__main__":
     timeout_seconds = 120  # Timeout for each single evaluation
     sampling_ratio = 1.0  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
     random_seed = 42  # Random seed for reproducible sampling
+    penalize_extra_pred_cols = True  # Whether to penalize extra columns in predictions
 
     result_df = evaluate_with_techniques(
         csv_file_path=input_csv_path,
@@ -322,6 +332,7 @@ if __name__ == "__main__":
         log_dir=log_dir,
         techniques=techniques,
         embedding_model=embedding_model,
+        penalize_extra_pred_cols=penalize_extra_pred_cols,
         output_csv_path=output_csv_path,
         timeout_seconds=timeout_seconds,
         sampling_ratio=sampling_ratio,

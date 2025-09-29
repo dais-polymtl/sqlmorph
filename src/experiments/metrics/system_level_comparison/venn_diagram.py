@@ -47,7 +47,7 @@ def load_and_prepare_data(csv_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
 
     # Create pivot table for easier intersection calculations
     df_pivot = df_filtered.pivot_table(
-        index="question_id", columns="system", values="ex", fill_value=-1
+        index="question_id", columns="system", values="ex", fill_value="-1"
     )
 
     return df_filtered, df_pivot
@@ -317,28 +317,60 @@ def create_venn_diagram(
     for region_id, label in venn_labels.items():
         if venn.get_label_by_id(region_id):
             venn.get_label_by_id(region_id).set_text(label)
-            venn.get_label_by_id(region_id).set_fontsize(10)
+            venn.get_label_by_id(region_id).set_fontsize(12)
+
+    # Increase the font size of system labels (set labels)
+    for label in venn.set_labels:
+        if label:
+            label.set_fontsize(16)
+            label.set_fontweight("bold")
 
     # Customize colors and appearance
     if venn.get_patch_by_id("100"):
         venn.get_patch_by_id("100").set_color("#ff9999")
         venn.get_patch_by_id("100").set_alpha(0.7)
+        venn.get_patch_by_id("100").set_edgecolor("red")
+        venn.get_patch_by_id("100").set_linewidth(2)
+        venn.get_patch_by_id("100").set_linestyle("-")  # Solid line for chess
     if venn.get_patch_by_id("010"):
         venn.get_patch_by_id("010").set_color("#66b3ff")
         venn.get_patch_by_id("010").set_alpha(0.7)
+        venn.get_patch_by_id("010").set_edgecolor("blue")
+        venn.get_patch_by_id("010").set_linewidth(2)
+        venn.get_patch_by_id("010").set_linestyle("--")  # Dashed line for din-sql
     if venn.get_patch_by_id("001"):
         venn.get_patch_by_id("001").set_color("#99ff99")
         venn.get_patch_by_id("001").set_alpha(0.7)
+        venn.get_patch_by_id("001").set_edgecolor("green")
+        venn.get_patch_by_id("001").set_linewidth(2)
+        venn.get_patch_by_id("001").set_linestyle(":")  # Dotted line for mac-sql
+
+    # Apply line styles to intersection patches as well
+    intersection_patches = ["110", "101", "011"]
+    line_styles = ["-", "--", ":"]  # Different styles for intersections
+    colors = ["purple", "orange", "brown"]
+
+    for i, patch_id in enumerate(intersection_patches):
+        if venn.get_patch_by_id(patch_id):
+            venn.get_patch_by_id(patch_id).set_edgecolor(colors[i])
+            venn.get_patch_by_id(patch_id).set_linewidth(2)
+            venn.get_patch_by_id(patch_id).set_linestyle(line_styles[i])
+
+    # Style the three-way intersection separately
+    if venn.get_patch_by_id("111"):
+        venn.get_patch_by_id("111").set_edgecolor("black")
+        venn.get_patch_by_id("111").set_linewidth(3)
+        venn.get_patch_by_id("111").set_linestyle("-")
 
     # Set title and labels
     if correct:
-        title = "Success Cases Distribution Over Systems (EX=1)"
+        # title = "Success Cases Distribution Over Systems (EX=1)"
         answer_type = "Correct"
     else:
-        title = "Failure Cases Distribution Over Systems (EX=0)"
+        # title = "Failure Cases Distribution Over Systems (EX=0)"
         answer_type = "Failed"
 
-    plt.title(title, fontsize=14, fontweight="bold")
+    # plt.title(title, fontsize=14, fontweight="bold")
 
     # Save the plot in both PNG and PDF formats
     filename_base = f"{answer_type.lower()}_answers_venn"
@@ -379,8 +411,8 @@ def run_analytics(csv_path: str, output_dir: str = "plots") -> None:
 
 if __name__ == "__main__":
     # Example usage
-    ROOT = "/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage/data/evaluation/experiments/systems_evel_on_bird"
-    csv_path = ROOT + "/systems_data_with_metrics.csv"
+    ROOT = "data/metrics/experiments/system_level_comparison"
+    csv_path = ROOT + "/systems_data_with_metrics-with_penalty.csv"
     output_dir = ROOT + "/plots"
 
     run_analytics(csv_path, output_dir)

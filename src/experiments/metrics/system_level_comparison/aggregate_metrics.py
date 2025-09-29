@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import numpy as np
 
 
 def parse_metric_dict(metric_str):
@@ -16,7 +17,9 @@ def parse_metric_dict(metric_str):
         return None
 
 
-def compute_average_metrics(system_data, system_name, is_common_failure=False):
+def compute_average_metrics(
+    system_data, system_name, techniques, is_common_failure=False
+):
     """Compute average metrics for a given system data subset"""
     prefix = "common_failure_" if is_common_failure else ""
     result_row = {"system": f"{prefix}{system_name}"}
@@ -35,13 +38,7 @@ def compute_average_metrics(system_data, system_name, is_common_failure=False):
 
     result_row["EXECUTION_ACCURACY"] = json.dumps({"EX": ex_avg})
 
-    # 2. Compute aggregated metrics for the three techniques
-    techniques = [
-        "EXACT_COLUMN_AND_EXACT_CELL",
-        "SEMANTIC_COLUMN_AND_EXACT_CELL",
-        "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
-    ]
-
+    # 2. Compute aggregated metrics for the specified techniques
     for technique in techniques:
         # Initialize accumulators
         ex_values = []
@@ -75,7 +72,14 @@ def compute_average_metrics(system_data, system_name, is_common_failure=False):
         if f1_values:
             agg_metrics["F1"] = round(sum(f1_values) / len(f1_values), 4)
         if latency_values:
-            agg_metrics["latency"] = round(sum(latency_values) / len(latency_values), 4)
+            agg_metrics["latency_avg"] = round(
+                sum(latency_values) / len(latency_values), 4
+            )
+            agg_metrics["latency_std"] = (
+                round(np.std(latency_values, ddof=1), 4)
+                if len(latency_values) > 1
+                else 0.0
+            )
 
         result_row[technique] = json.dumps(agg_metrics)
 
@@ -113,7 +117,7 @@ def identify_common_failures(df, systems):
     return common_failure_question_ids
 
 
-def compute_system_metrics(input_path, output_path):
+def compute_system_metrics(input_path, output_path, techniques):
     # Read the CSV file
     df = pd.read_csv(input_path)
 
@@ -127,16 +131,43 @@ def compute_system_metrics(input_path, output_path):
     # STEP 1: Compute overall metrics for each system
     for system in systems:
         system_data = df[df["system"] == system]
-        result_row = compute_average_metrics(system_data, system)
+        result_row = compute_average_metrics(system_data, system, techniques)
         results.append(result_row)
         print(f"Processed overall metrics for system: {system}")
 
-    # STEP 2: Identify common failure question_ids
+    # STEP 2: Compute individual system failure metrics (where EX=0 for each system)
+    for system in systems:
+        system_data = df[df["system"] == system]
+
+        # Find question_ids where this system has EX=0
+        failure_question_ids = []
+        for _, row in system_data.iterrows():
+            exec_metric = parse_metric_dict(row["EXECUTION_ACCURACY"])
+            if exec_metric and "EX" in exec_metric and exec_metric["EX"] == 0:
+                failure_question_ids.append(row["question_id"])
+
+        if failure_question_ids:
+            system_failure_data = df[
+                (df["system"] == system)
+                & (df["question_id"].isin(failure_question_ids))
+            ]
+
+            failure_result_row = compute_average_metrics(
+                system_failure_data,
+                f"{system}_individual_failures",
+                techniques,
+                is_common_failure=False,
+            )
+            results.append(failure_result_row)
+            print(
+                f"Processed individual failure metrics for system: {system} ({len(failure_question_ids)} failures)"
+            )
+
+    # STEP 3: Identify common failure question_ids
     common_failure_question_ids = identify_common_failures(df, systems)
     print(f"\nFound {len(common_failure_question_ids)} common failure question IDs")
-    # print(f"Common failure question IDs: {common_failure_question_ids}")
 
-    # STEP 3: Compute metrics for common failure cases
+    # STEP 4: Compute metrics for common failure cases
     if common_failure_question_ids:
         for system in systems:
             system_failure_data = df[
@@ -146,7 +177,7 @@ def compute_system_metrics(input_path, output_path):
 
             if len(system_failure_data) > 0:
                 failure_result_row = compute_average_metrics(
-                    system_failure_data, system, is_common_failure=True
+                    system_failure_data, system, techniques, is_common_failure=True
                 )
                 results.append(failure_result_row)
                 print(f"Processed common failure metrics for system: {system}")
@@ -165,10 +196,20 @@ def compute_system_metrics(input_path, output_path):
 
 
 if __name__ == "__main__":
-    INPUT_PATH = (
-        "data/evaluation/experiments/systems_evel_on_bird/systems_data_with_metrics.csv"
-    )
+    # CONFIGURABLE PARAMETERS
+    INPUT_PATH = "data/metrics/experiments/system_level_comparison/systems_data_with_metrics-with_penalty.csv"
     OUTPUT_PATH = (
-        "data/evaluation/experiments/systems_evel_on_bird/system_metrics_avg_report.csv"
+        "data/metrics/experiments/system_level_comparison/system_metrics_avg_report.csv"
     )
-    compute_system_metrics(INPUT_PATH, OUTPUT_PATH)
+
+    # Techniques to analyze
+    techniques = [
+        "EXACT_COLUMN_AND_EXACT_CELL",
+        "EXACT_COLUMN_AND_PARTIAL_CELL",
+        "SEMANTIC_COLUMN_AND_EXACT_CELL",
+        "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+        "NO_COLUMN_AND_PARTIAL_CELL",
+        # "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
+    ]
+
+    compute_system_metrics(INPUT_PATH, OUTPUT_PATH, techniques)
