@@ -415,20 +415,20 @@ def main():
     """
     Main function to run the CHESS results processing.
     """
-    # sys_names = ["CHESS"]
-    # techniques = ["ori", "sr", "bt", "ca"]
-    # for sys_name in sys_names:
-    #     for tech in techniques:
-    #         logger.log("info", f"Processing {sys_name} results for {tech} technique")
-    #         read_chess_results(sys_name, tech)
+    sys_names = ["CHESS"]
+    techniques = ["ori", "sr", "bt", "ca"]
+    for sys_name in sys_names:
+        for tech in techniques:
+            logger.log("info", f"Processing {sys_name} results for {tech} technique")
+            read_chess_results(sys_name, tech)
 
-    # read_mac_results("MAC-SQL", "ori")
+    read_mac_results("MAC-SQL", "ori")
 
-    # sys_names = ["MAC-SQL"]
-    # techniques = ["sr", "bt", "ca"]
-    # for sys_name in sys_names:
-    #     for tech in techniques:
-    calculate_delta_ex("CHESS", "sr")
+    sys_names = ["MAC-SQL"]
+    techniques = ["sr", "bt", "ca"]
+    for sys_name in sys_names:
+        for tech in techniques:
+            calculate_delta_ex("CHESS", "sr")
 
 
 if __name__ == "__main__":

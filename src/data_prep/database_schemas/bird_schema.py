@@ -223,6 +223,8 @@ def main():
             for db_info in data:
                 database_name = db_info.get("db_id", "")
                 schema = BIRD_Schema(database_name, dataset_path)
+                if db_info.get("db_id", "") == "movie":
+                    print(schema)
 
                 schema.save_graph_and_image(graph_folder_path)
 

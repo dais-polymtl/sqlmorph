@@ -302,7 +302,7 @@ def main() -> None:
     # plot_avg_degree(data_folder)
     # plot_delta_avg_degree(data_folder)
     # export_cyclicity_distribution_csv(data_folder)
-    schema_graphs_cyclicity(data_folder)
+    # schema_graphs_cyclicity(data_folder)
     # plot_accuracy_by_joins()
 
 

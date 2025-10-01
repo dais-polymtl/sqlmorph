@@ -10,10 +10,10 @@ from src.core.logger.logger import Logger
 from .sql_query_gen import (
     aug_n_table_sql_queries,
 )
-from .nl_query_gen import (
-    gen_nl,
-)
-from .persistence import (
+
+from nl_query_gen import gen_nl
+
+from persistence import (
     save_graph_first,
     save_query_first,
 )
@@ -33,11 +33,15 @@ def store_sql_nl_pairs(filtered_aug, discarded_aug, graph_first=False):
 
 
 def main(args):
-    filtered_aug, discarded_aug, _ = aug_n_table_sql_queries(
+    filtered_aug, discarded_aug, all_extensions = aug_n_table_sql_queries(
         db_id=args.db_id,
         num_tables=args.num_tables,
         graph_first=args.graph_first,
+        max_queries=args.max_queries,
+        max_isomorphic=args.max_isomorphic,
+        sort_asc=args.sort_asc,
     )
+
     filtered_aug = gen_nl(
         filtered_aug,
         graph_first=args.graph_first,
@@ -61,7 +65,6 @@ def str2bool(v):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description="Run augmentation code.")
     parser.add_argument(
         "db_id",
@@ -72,6 +75,27 @@ if __name__ == "__main__":
         "num_tables",
         type=int,
         help="Number of tables involved in the augmented queries.",
+    )
+    parser.add_argument(
+        "-max",
+        "--max_queries",
+        type=int,
+        default=1000,
+        help="Maximum number of expanded queries to generate.",
+    )
+    parser.add_argument(
+        "-iso",
+        "--max_isomorphic",
+        type=int,
+        default=1,
+        help="Maximum number of isomorphic queries to generate for each input query.",
+    )
+    parser.add_argument(
+        "-asc",
+        "--sort_asc",
+        type=str2bool,
+        default=False,
+        help="Sort the tables in ascending order based on their number of rows.",
     )
     parser.add_argument(
         "-g",
