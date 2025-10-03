@@ -4,7 +4,7 @@ Simple CSV Export for Mutant Scores Analysis
 ============================================
 This script reads mutant_scores_*.json files and exports a simple CSV with:
 - operator: the mutation operator name
-- EXACT_COLUMN_AND_EXACT_CELL, SEMANTIC_COLUMN_AND_EXACT_CELL, UNIFIED_COLUMN_AND_SEMANTIC_ROW:
+- EXACT_COLUMN_AND_EXACT_CELL, SEMANTIC_COLUMN_AND_EXACT_CELL, etc.:
   dict with EX, EXP, EXR, F1 scores and their delta values (metric-1)
 """
 
@@ -14,26 +14,10 @@ from pathlib import Path
 import pandas as pd
 import math
 
-# ────────────────────────────────────────────────────────────────────────
-# Configuration - adjust to your environment
-# ────────────���───────────────────────────────────────────────────────────
-ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
-SCORES_DIR = (
-    ROOT
-    / "data/evaluation/experiments/controlled_error_sensitivity/scores/single_operator"
-)
-OUTPUT_CSV = SCORES_DIR / "mutant_scores_summary.csv"
 
-# Technique name mapping
-TECHNIQUE_MAPPING = {
-    "exact_column_and_exact_cell": "EXACT_COLUMN_AND_EXACT_CELL",
-    "semantic_column_and_exact_cell": "SEMANTIC_COLUMN_AND_EXACT_CELL",
-    "unified_column_and_semantic_row": "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
-}
-
-
-def find_mutant_score_files(scores_dir):
+def find_mutant_score_files(scores_dir, technique_mapping):
     """Find all mutant_scores_*.json files and extract technique names."""
+    scores_dir = Path(scores_dir)  # Convert to Path object
     pattern = str(scores_dir / "mutant_scores_*.json")
     files = glob.glob(pattern)
 
@@ -44,7 +28,7 @@ def find_mutant_score_files(scores_dir):
         technique_name = filename.replace("mutant_scores_", "").replace(".json", "")
 
         # Map to standardized names
-        mapped_name = TECHNIQUE_MAPPING.get(technique_name, technique_name.upper())
+        mapped_name = technique_mapping.get(technique_name, technique_name.upper())
 
         techniques.append(
             {
@@ -192,11 +176,13 @@ def process_data_to_csv(techniques, output_path):
     for operator, techniques_data in operator_data.items():
         row = {"operator": operator}
 
-        # Add columns for each technique
+        # Add columns for each technique - update to match available techniques
         for technique_name in [
             "EXACT_COLUMN_AND_EXACT_CELL",
+            "EXACT_COLUMN_AND_PARTIAL_CELL",
             "SEMANTIC_COLUMN_AND_EXACT_CELL",
-            "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
+            "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+            "NO_COLUMN_AND_PARTIAL_CELL",
         ]:
             row[technique_name] = techniques_data.get(technique_name, "")
 
@@ -205,6 +191,7 @@ def process_data_to_csv(techniques, output_path):
     # Write to CSV
     if csv_rows:
         df_output = pd.DataFrame(csv_rows)
+        output_path = Path(output_path)  # Convert to Path object
         df_output.to_csv(output_path, index=False)
         print(f"\nCSV exported to: {output_path}")
         print(f"Total rows: {len(csv_rows)}")
@@ -217,18 +204,34 @@ def process_data_to_csv(techniques, output_path):
         print("No data to export!")
 
 
-def main():
+if __name__ == "__main__":
+    experiment_name = "single_error_without_penalty-2025-09-30_3"
+    SCORES_DIR = Path(
+        f"data/metrics/experiments/controlled_error_sensitivity/scores/{experiment_name}"
+    )
+    OUTPUT_CSV = SCORES_DIR / f"mutant_scores_summary-{experiment_name}.csv"
+
+    # Technique name mapping
+    TECHNIQUE_MAPPING = {
+        "exact_column_and_exact_cell": "EXACT_COLUMN_AND_EXACT_CELL",
+        "exact_column_and_partial_cell": "EXACT_COLUMN_AND_PARTIAL_CELL",
+        "semantic_column_and_exact_cell": "SEMANTIC_COLUMN_AND_EXACT_CELL",
+        "semantic_column_and_partial_cell": "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+        "no_column_and_partial_cell": "NO_COLUMN_AND_PARTIAL_CELL",
+        # "unified_column_and_semantic_row": "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
+    }
+
     print("Simple Mutant Scores CSV Export")
     print("=" * 35)
     print(f"Input directory: {SCORES_DIR}")
     print(f"Output CSV: {OUTPUT_CSV}")
 
     # Find technique files
-    techniques = find_mutant_score_files(SCORES_DIR)
+    techniques = find_mutant_score_files(SCORES_DIR, TECHNIQUE_MAPPING)
 
     if not techniques:
         print(f"No mutant_scores_*.json files found in {SCORES_DIR}")
-        return
+        exit(1)
 
     print(f"\nFound {len(techniques)} technique file(s):")
     for tech in techniques:
@@ -238,7 +241,3 @@ def main():
     process_data_to_csv(techniques, OUTPUT_CSV)
 
     print("\nDone!")
-
-
-if __name__ == "__main__":
-    main()

@@ -2,67 +2,19 @@
 """
 Single Operator Mutants Evaluation
 
-Goal
-────
-• Loads single_operator_mutants.json
-• Evaluates each mutant using multiple evaluation techniques sequentially
-• Each technique produces its own separate results file with quality filtering
-• Extracts metrics EX / EXP / EXR / F1 and latency from Evaluation's return value
-
 Process
 ───────
-1. Load mutants from single_operator_mutants.json
-2. Apply smart sampling by specific operators and complete question_id groups
-3. For each evaluation technique:
-   - Iterate through all mutants sequentially
+1. Load mutants from mutants.json
+2. Filter to only depth=1 mutants (single operator mutations)
+3. Apply smart sampling by specific operators and complete question_id groups
+4. For each evaluation technique (6 techniques including EXECUTION_ACCURACY):
+   - Iterate through all depth=1 mutants sequentially
    - Use func_timeout for timeout enforcement (≤ 120s per query)
    - Apply quality filtering to remove problematic questions with EX=1
    - Generate technique-specific output file
    - Calculate and display summary statistics including operator distribution
-4. Each mutant is evaluated with func_timeout for timeout control
-5. Results are saved as separate JSON files per technique in the scores/single_operator directory
-
-Sampling Strategy
-─────────────────
-• SPECIFIC_OPERATORS: Filter to only include mutants with specified operators
-• SAMPLE_SIZE: When set, sample complete question_id groups (not individual mutants)
-• This ensures all depth levels for each original query are included together
-• From each operator group, sample up to SAMPLE_SIZE question groups for diversity
-• Quality filtering removes question_id groups where any mutant achieves EX=1
-  (suggests problematic queries where errors don't affect results)
-
-Logging
-───────
-• All evaluation techniques share a single log directory (logs/ under output directory)
-• LOG flag controls whether detailed evaluation logging is enabled
-• Logs are saved alongside the mutant scores files for easy organization
-
-Performance
-───────────
-• Uses simple iteration through all mutants with func_timeout for timeout control
-• Each query evaluation has timeout protection (120s default)
-
-Output Files
-────────────
-• mutant_scores_exact_column_and_exact_cell.json
-• mutant_scores_semantic_column_and_exact_cell.json (if enabled)
-• mutant_scores_unified_column_and_semantic_row.json (if enabled)
-• logs/ (shared directory for all techniques if LOG=True)
-
-Configuration
-─────────────
-• SAMPLE_SIZE: Integer for testing subset, None to score entire dataset
-• SPECIFIC_OPERATORS: List of operators to evaluate (filters before sampling)
-• LOG: True/False to control detailed evaluation logging
-• PER_QUERY_TIMEOUT: Timeout in seconds for individual query evaluation (default 120s)
-• EVALUATION_TECHNIQUES: List of EvaluationTechnique enums to compare
-• EMBEDDING_MODEL: OpenAI embedding model for semantic evaluation techniques
-
-Quality Filtering
-─────────────────
-After evaluation, removes entire question groups where any mutant achieves EX=1,
-as this suggests the query generates results unaffected by introduced errors
-(e.g., null tables or trivial queries).
+5. Each mutant is evaluated with func_timeout for timeout control
+6. Results are saved as separate JSON files per technique in the scores/{experiment_name} directory
 """
 
 from __future__ import annotations
@@ -82,59 +34,8 @@ from src.core.database.database_handler import DBMS
 from src.core.model_manager import OpenAIModel
 from src.metrics import Evaluation, EvaluationTechnique
 
-# ──────────────────────────────────────────────────────────────────────────
-# 0.  Paths, constants, and evaluation techniques
-# ──────────────────────────────────────────────────────────────────────────
-ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
-DEV_DB_ROOT = ROOT / "data/benchmarks/Bird/dev_databases"
-MUTANTS_JSON = (
-    ROOT
-    / "data/evaluation/experiments/controlled_error_sensitivity/single_operator_mutants.json"
-)
-OUT_DIR = (
-    ROOT
-    / "data/evaluation/experiments/controlled_error_sensitivity/scores/single_operator"
-)
 
-LOGS_DIR = OUT_DIR / "logs"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Multiple evaluation techniques to compare mutation impact across different metrics
-EVALUATION_TECHNIQUES = [
-    EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
-    EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-    EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
-]
-
-# Embedding model configuration for semantic evaluation techniques
-EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
-
-# Configuration options
-SAMPLE_SIZE = 10  # None → score all mutants; small int for quick test (applied to question groups)
-
-# List of specific operators to evaluate
-SPECIFIC_OPERATORS = [
-    "projection_drop",
-    "add_star_wildcard",
-    "where_predicate_delete",
-    "where_condition_flip",
-    "where_remove",
-    "having_predicate_delete",
-    "having_condition_flip",
-    "having_remove",
-    "join_break",
-    "join_type_to_left",
-    "aggregation_swap",
-    "limit_increase",
-]
-
-PER_QUERY_TIMEOUT = 120  # wall-clock seconds per individual query evaluation
-LOG = True  # Enable/disable detailed evaluation logging per technique
-
-
-# ──────────────────────────────────────────────────────────────────────────
 # 1.  Smart sampling and quality filtering functions
-# ──────────────────────────────────────────────────────────────────────────
 def group_mutants_by_question(mutants: List[Dict]) -> Dict[str, List[Dict]]:
     """
     Group mutants by question_id to ensure complete sets are processed together.
@@ -212,32 +113,47 @@ def filter_by_specific_operators(
     return filtered_mutants
 
 
-def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[Dict]:
+def smart_sample_mutants(
+    mutants: List[Dict],
+    sample_size: int = None,
+    specific_operators: List[str] = None,
+    random_seed: int = 42,
+) -> List[Dict]:
     """
     Apply smart sampling that maintains complete question_id groups and filters by specific operators.
+    Only includes mutants with depth=1 (single operator mutations).
 
     Sampling strategy:
-    1. If SPECIFIC_OPERATORS is set, filter to only include those specific operators
-    2. From each operator group, sample up to sample_size question groups
-    3. This ensures a diverse set of mutants across different operators
+    1. Filter to only depth=1 mutants (single operator mutations)
+    2. If specific_operators is set, filter to only include those specific operators
+    3. From each operator group, sample up to sample_size question groups
+    4. This ensures a diverse set of mutants across different operators
 
     Args:
         mutants: List of all mutants
         sample_size: Target number of mutants per operator (None = all)
+        specific_operators: List of operators to filter by
+        random_seed: Base random seed for reproducible sampling
 
     Returns:
-        List of sampled mutants maintaining complete question groups
+        List of sampled mutants maintaining complete question groups, depth=1 only
     """
-    if sample_size is None and not SPECIFIC_OPERATORS:
-        return mutants
-
     print(f"Original: {len(mutants)} mutants")
 
-    # If SPECIFIC_OPERATORS is defined, filter to those operators
-    if SPECIFIC_OPERATORS:
-        filtered_mutants = filter_by_specific_operators(mutants, SPECIFIC_OPERATORS)
+    # Filter to only depth=1 mutants first
+    depth_1_mutants = [m for m in mutants if m.get("depth") == 1]
+    print(f"Filtered to depth=1: {len(depth_1_mutants)} mutants")
+
+    if sample_size is None and not specific_operators:
+        return depth_1_mutants
+
+    mutants = depth_1_mutants
+
+    # If specific_operators is defined, filter to those operators
+    if specific_operators:
+        filtered_mutants = filter_by_specific_operators(mutants, specific_operators)
         print(
-            f"Filtered to {len(filtered_mutants)} mutants with {len(SPECIFIC_OPERATORS)} specific operators"
+            f"Filtered to {len(filtered_mutants)} mutants with {len(specific_operators)} specific operators"
         )
         mutants = filtered_mutants
 
@@ -266,7 +182,7 @@ def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[D
         else:
             # Otherwise, randomly sample question groups
             random.seed(
-                42 + hash(operator)
+                random_seed + hash(operator)
             )  # Different seed per operator for diversity
             sampled_question_ids = random.sample(
                 list(question_groups.keys()), sample_size
@@ -281,7 +197,7 @@ def smart_sample_mutants(mutants: List[Dict], sample_size: int = None) -> List[D
         )
 
     print(
-        f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions"
+        f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions (all depth=1)"
     )
 
     return sampled_mutants
@@ -339,10 +255,10 @@ def filter_problematic_questions(mutants: List[Dict]) -> List[Dict]:
     return filtered_mutants
 
 
-# ──────────────────────────────────────────────────────────────────────────
 # 2.  Direct evaluation with func_timeout
-# ──────────────────────────────────────────────────────────────────────────
-def _evaluate_with_timeout(cfg: dict, pred_sql: str, gold_sql: str) -> tuple:
+def _evaluate_with_timeout(
+    cfg: dict, pred_sql: str, gold_sql: str, log_enabled: bool
+) -> tuple:
     """
     Executes Evaluation.run_evaluation with func_timeout.
 
@@ -350,6 +266,7 @@ def _evaluate_with_timeout(cfg: dict, pred_sql: str, gold_sql: str) -> tuple:
         cfg: Evaluation configuration dictionary
         pred_sql: Mutated SQL to evaluate
         gold_sql: Ground truth SQL for comparison
+        log_enabled: Whether logging is enabled
 
     Returns:
         (metrics_dict, latency) on success
@@ -360,7 +277,7 @@ def _evaluate_with_timeout(cfg: dict, pred_sql: str, gold_sql: str) -> tuple:
         ctx = Evaluation(cfg).run_evaluation(
             predicted_sql=pred_sql,
             ground_truth_sql=gold_sql,
-            log=LOG,
+            log=log_enabled,
         )
         latency = ctx.get("latency", time.time() - start)
         return (ctx["metrics"], latency)
@@ -368,7 +285,13 @@ def _evaluate_with_timeout(cfg: dict, pred_sql: str, gold_sql: str) -> tuple:
         return (None, -1)
 
 
-def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
+def score_one_mutant(
+    mutant: dict,
+    template_cfg: dict,
+    dev_db_root: str,
+    per_query_timeout: int,
+    log_enabled: bool,
+) -> dict:
     """
     Evaluate a single mutant with timeout protection.
 
@@ -380,21 +303,24 @@ def score_one_mutant(mutant: dict, template_cfg: dict) -> dict:
     Args:
         mutant: Mutant dictionary containing SQL and metadata
         template_cfg: Base evaluation configuration to copy
+        dev_db_root: Path to development databases
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether logging is enabled
 
     Returns:
         Updated mutant dict with EX/EXP/EXR/F1/latency fields
     """
     # Create config with correct database path
     cfg = copy.deepcopy(template_cfg)
-    db_file = DEV_DB_ROOT / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
+    db_file = Path(dev_db_root) / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
     cfg["db_params"]["db_path"] = str(db_file)
 
     # Use func_timeout for evaluation
     try:
         metrics, latency = func_timeout(
-            PER_QUERY_TIMEOUT,
+            per_query_timeout,
             _evaluate_with_timeout,
-            args=(cfg, mutant["mutated_sql"], mutant["gold_sql"]),
+            args=(cfg, mutant["mutated_sql"], mutant["gold_sql"], log_enabled),
         )
     except FunctionTimedOut:
         metrics, latency = None, -1
@@ -436,7 +362,14 @@ def get_technique_name(technique: EvaluationTechnique) -> str:
 
 
 def evaluate_with_technique(
-    mutants: List[Dict], technique: EvaluationTechnique
+    mutants: List[Dict],
+    technique: EvaluationTechnique,
+    embedding_model,
+    penalize_extra_pred_cols: bool,
+    logs_dir: str,
+    dev_db_root: str,
+    per_query_timeout: int,
+    log_enabled: bool,
 ) -> List[Dict]:
     """
     Evaluate all mutants using a specific evaluation technique with simple iteration.
@@ -444,32 +377,42 @@ def evaluate_with_technique(
     Args:
         mutants: List of mutant dictionaries to evaluate
         technique: Evaluation technique to use
+        embedding_model: Embedding model for semantic techniques
+        penalize_extra_pred_cols: Whether to penalize extra predicted columns
+        logs_dir: Directory for logs
+        dev_db_root: Path to development databases
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether logging is enabled
 
     Returns:
         List of mutants with evaluation results added (filtered for quality)
     """
     technique_name = get_technique_name(technique)
 
-    # Use the single log directory for all techniques
-    log_dir_path = str(LOGS_DIR)
-
     # Create evaluation configuration template for this technique
     eval_template = {
         "evaluation_technique": technique,
         "db_params": {"dbms": DBMS.SQLITE, "db_path": ""},  # db_path filled per query
-        "embedding_model": EMBEDDING_MODEL,
-        "logs_dir_path": log_dir_path,  # Single log directory for all techniques
+        "embedding_model": embedding_model,
+        "penalize_extra_pred_cols": penalize_extra_pred_cols,
+        "logs_dir_path": logs_dir,
     }
 
     print(f"  → Evaluating {len(mutants):,} mutants with {technique.name}")
-    if LOG:
-        print(f"  → Logs: {log_dir_path}")
+    if log_enabled:
+        print(f"  → Logs: {logs_dir}")
 
     scored: List[dict] = []
 
     # Simple iteration through all mutants with progress tracking
     for mutant in tqdm(mutants, desc=f"  {technique_name}", ncols=80):
-        result = score_one_mutant(copy.deepcopy(mutant), eval_template)
+        result = score_one_mutant(
+            copy.deepcopy(mutant),
+            eval_template,
+            dev_db_root,
+            per_query_timeout,
+            log_enabled,
+        )
         scored.append(result)
 
     # Apply quality filtering after evaluation
@@ -478,16 +421,14 @@ def evaluate_with_technique(
     return filtered_scored
 
 
-# ──────────────────────────────────────────────────────────────────────────
 # 3.  Main evaluation routine
-# ──────────────────────────────────────────────────────────────────────────
 def main():
     """
     Main evaluation pipeline that processes single operator mutants with multiple techniques.
 
     Process:
     1. Load mutants from single_operator_mutants.json
-    2. Apply smart sampling (by specific operators and question groups) and quality filtering
+    2. Apply smart sampling (by specific operators and question_groups) and quality filtering
     3. For each evaluation technique:
        - Iterate through all mutants sequentially
        - Use func_timeout for timeout protection
@@ -501,13 +442,15 @@ def main():
 
     # Load mutants from single_operator_mutants.json
     print(f"Loading mutants from {MUTANTS_JSON}")
-    with MUTANTS_JSON.open() as f:
+    with Path(MUTANTS_JSON).open() as f:
         all_mutants: List[Dict] = json.load(f)
 
     print(f"Loaded {len(all_mutants):,} total mutants")
 
     # Apply smart sampling by specific operators and question groups
-    sampled_mutants = smart_sample_mutants(all_mutants, SAMPLE_SIZE)
+    sampled_mutants = smart_sample_mutants(
+        all_mutants, SAMPLE_SIZE, SPECIFIC_OPERATORS, RANDOM_SEED
+    )
 
     # Show operator distribution before evaluation
     operator_counts = defaultdict(int)
@@ -522,6 +465,8 @@ def main():
     # Display configuration
     print("\nConfiguration:")
     print(f"  Embedding model: {EMBEDDING_MODEL.value}")
+    print(f"  Penalize extra pred cols: {PENALIZE_EXTRA_PRED_COLS}")
+    print(f"  Random seed: {RANDOM_SEED}")
     print(f"  Per-query timeout: {PER_QUERY_TIMEOUT}s")
     print(f"  Logging enabled: {LOG}")
     print(f"  Output directory: {OUT_DIR}")
@@ -537,7 +482,16 @@ def main():
         print(f"\n[{i}/{len(EVALUATION_TECHNIQUES)}] {technique.name}")
 
         # Run evaluation for this technique (includes quality filtering)
-        scored_mutants = evaluate_with_technique(sampled_mutants, technique)
+        scored_mutants = evaluate_with_technique(
+            sampled_mutants,
+            technique,
+            EMBEDDING_MODEL,
+            PENALIZE_EXTRA_PRED_COLS,
+            LOGS_DIR,
+            DEV_DB_ROOT,
+            PER_QUERY_TIMEOUT,
+            LOG,
+        )
 
         # Show operator distribution after evaluation and filtering
         final_operator_counts = defaultdict(int)
@@ -550,7 +504,7 @@ def main():
             print(f"    • {operator}: {count} mutants")
 
         # Save technique-specific results
-        out_file = OUT_DIR / f"mutant_scores_{technique_name}.json"
+        out_file = Path(OUT_DIR) / f"mutant_scores_{technique_name}.json"
         out_file.parent.mkdir(parents=True, exist_ok=True)
 
         with out_file.open("w") as f:
@@ -600,8 +554,51 @@ def main():
     print(f"{'=' * 60}")
 
 
-# ──────────────────────────────────────────────────────────────────────────
 # Entry-point
-# ──────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Paths and directories
+    experiment_name = "single_error_without_penalty-2025-09-30_3"
+    DEV_DB_ROOT = "data/benchmarks/Bird/dev_databases"
+    MUTANTS_JSON = (
+        "data/metrics/experiments/controlled_error_sensitivity/mutants_depth1.json"
+    )
+    OUT_DIR = f"data/metrics/experiments/controlled_error_sensitivity/scores/{experiment_name}"
+
+    LOGS_DIR = Path(OUT_DIR) / "logs"
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Multiple evaluation techniques to compare mutation impact across different metrics
+    EVALUATION_TECHNIQUES = [
+        # EvaluationTechnique.EXECUTION_ACCURACY,
+        # EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+        # EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
+        # EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
+    ]
+
+    EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
+    PENALIZE_EXTRA_PRED_COLS = False  # Whether to penalize extra predicted columns
+    RANDOM_SEED = 42  # Base random seed for reproducible sampling
+
+    SAMPLE_SIZE = 20  # None → score all mutants; small int for quick test (applied to question groups)
+
+    # List of specific operators to evaluate - focusing on outer query structure only
+    SPECIFIC_OPERATORS = [
+        "projection_drop",  # Remove columns from SELECT (outer query)
+        "add_star_wildcard",  # Add SELECT * (outer query)
+        "where_predicate_delete",  # Remove WHERE conditions (outer query)
+        "where_condition_flip",  # Flip WHERE conditions (outer query)
+        "where_remove",  # Remove entire WHERE clause (outer query)
+        "having_condition_flip",  # Flip HAVING conditions (outer query)
+        "having_remove",  # Remove entire HAVING clause (outer query)
+        "join_break",  # Break JOIN relationships (outer query)
+        "join_type_to_left",  # Change JOIN types (outer query)
+        "aggregation_swap",  # Swap aggregation functions (outer query)
+        "limit_increase",  # Modify LIMIT clause (outer query)
+    ]
+
+    PER_QUERY_TIMEOUT = 30  # wall-clock seconds per individual query evaluation
+    LOG = True  # Enable/disable detailed evaluation logging per technique
+
     main()

@@ -26,17 +26,31 @@ def compute_average_metrics(
 
     # 1. Compute EXECUTION_ACCURACY average
     exec_accuracy_values = []
+    exec_latency_values = []
     for _, row in system_data.iterrows():
         exec_metric = parse_metric_dict(row["EXECUTION_ACCURACY"])
         if exec_metric and "EX" in exec_metric:
             exec_accuracy_values.append(exec_metric["EX"])
+            if "latency" in exec_metric:
+                exec_latency_values.append(exec_metric["latency"])
 
     if exec_accuracy_values:
         ex_avg = round(sum(exec_accuracy_values) / len(exec_accuracy_values), 4)
     else:
         ex_avg = 0.0
 
-    result_row["EXECUTION_ACCURACY"] = json.dumps({"EX": ex_avg})
+    exec_result = {"EX": ex_avg}
+    if exec_latency_values:
+        exec_result["latency_avg"] = round(
+            sum(exec_latency_values) / len(exec_latency_values), 4
+        )
+        exec_result["latency_std"] = (
+            round(np.std(exec_latency_values, ddof=1), 4)
+            if len(exec_latency_values) > 1
+            else 0.0
+        )
+
+    result_row["EXECUTION_ACCURACY"] = json.dumps(exec_result)
 
     # 2. Compute aggregated metrics for the specified techniques
     for technique in techniques:
@@ -197,10 +211,8 @@ def compute_system_metrics(input_path, output_path, techniques):
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    INPUT_PATH = "data/metrics/experiments/system_level_comparison/systems_data_with_metrics-with_penalty.csv"
-    OUTPUT_PATH = (
-        "data/metrics/experiments/system_level_comparison/system_metrics_avg_report.csv"
-    )
+    INPUT_PATH = "data/metrics/experiments/system_level_comparison/systems_data_with_metrics-without_penalty.csv"
+    OUTPUT_PATH = "data/metrics/experiments/system_level_comparison/system_metrics_avg_report-without_penalty.csv"
 
     # Techniques to analyze
     techniques = [

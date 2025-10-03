@@ -301,7 +301,7 @@ def sample_dataframe(
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    experiment_name = "systems_data_with_metrics-with_penalty"
+    experiment_name = "systems_data_with_metrics-without_penalty"
 
     ROOT = "data/metrics/experiments/system_level_comparison"
     input_csv_path = ROOT + "/systems_data.csv"
@@ -324,7 +324,7 @@ if __name__ == "__main__":
     timeout_seconds = 120  # Timeout for each single evaluation
     sampling_ratio = 1.0  # if int: pick exactly that many random question IDs, if float (0-1): pick that percentage of unique question IDs
     random_seed = 42  # Random seed for reproducible sampling
-    penalize_extra_pred_cols = True  # Whether to penalize extra columns in predictions
+    penalize_extra_pred_cols = False  # Whether to penalize extra columns in predictions
 
     result_df = evaluate_with_techniques(
         csv_file_path=input_csv_path,
