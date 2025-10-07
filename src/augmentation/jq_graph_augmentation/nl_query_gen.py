@@ -1,5 +1,5 @@
 from src.core.model_manager.utils import compose_chat_messages
-from src.data_prep.database_schemas.bird_schema import BIRD_Schema
+from src.augmentation.data_prep.database_schemas.bird_schema import BIRD_Schema
 from src.core.model_manager.model_manager import ModelManager, ModelProvider, ModelType
 from src.core.prompt_renderer.prompt_renderer import PromptRenderer
 from src.core.model_manager.openai_model import OpenAIModel
