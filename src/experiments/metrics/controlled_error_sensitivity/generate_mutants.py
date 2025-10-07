@@ -50,21 +50,30 @@ The mutation generation follows a depth-based incremental approach:
    - The final AST differs from the original
    - The resulting SQL is syntactically valid and parseable
 
+Important Implementation Detail
+───────────────────────────────
+All mutation operators are specifically designed to only target the outer query
+structure and preserve subqueries. This is achieved by directly targeting the
+outermost SELECT statement and its clauses (WHERE, HAVING, etc.) while leaving
+any nested subqueries untouched.
+
 Mutation Operators
 ──────────────────
-We implement 12 atomic mutation operators that target different SQL components:
+We implement 16 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
 • `add_star_wildcard` — Adds * or alias.* to SELECT list
+• `distinct_toggle` — Removes DISTINCT keyword from SELECT clause
 
 **WHERE Clause Mutations:**
 • `where_predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
 • `where_condition_flip` — Flips comparison operators in WHERE clauses (=↔!=, >↔<, >=↔<=)
+• `where_strengthen` — Makes WHERE conditions more restrictive (< to <=, > to >=)
+• `where_weaken` — Makes WHERE conditions less restrictive (<= to <, >= to >)
 • `where_remove` — Removes the WHERE clause completely
 
 **HAVING Clause Mutations:**
-• `having_predicate_delete` — Removes a random predicate from HAVING clause (requires >1 predicates)
 • `having_condition_flip` — Flips comparison operators in HAVING clauses (=↔!=, >↔<, >=↔<=)
 • `having_remove` — Removes the HAVING clause completely
 
@@ -76,7 +85,8 @@ We implement 12 atomic mutation operators that target different SQL components:
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
 
 **Result Limiting Mutations:**
-• `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
+• `limit_increase` — Increases existing LIMIT clause (makes it less restrictive)
+• `limit_decrease` — Decreases existing LIMIT clause (makes it more restrictive)
 
 Operator Conflicts
 ──────────────────
@@ -113,8 +123,7 @@ Correctness safeguards
 
 Output
 ──────
-`data/evaluation/experiments/controlled_error_sensitivity/mutants.json`
-with keys:
+The generated mutants are saved in a JSON file with the following structure:
     question_id · db_id · depth · operators[] · mutated_sql · error_count · gold_sql
 """
 
@@ -127,29 +136,14 @@ from typing import Dict, List, Tuple, Set
 
 from sqlglot import parse_one, exp
 
-# ────────────────────────────────────────────────────────────────────────
-# Config
-# ────────────────────────────────────────────────────────────────────────
-ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
 
-BIRD_DEV_JSON = "data/benchmarks/Bird/bird_dev.json"
-OUT_DIR = "data/evaluation/experiments/controlled_error_sensitivity"
-OUT_FILE = OUT_DIR + "/single_operator_mutants.json"
-MAX_DEPTH = 1  # Set this value to the desired max depth
-
-
-# Load BIRD-dev once
-def load_json(path: Path) -> list:
-    with path.open() as f:
+# Load JSON helper function
+def load_json(path: str) -> list:
+    with open(path) as f:
         return json.load(f)
 
 
-BIRD_DEV = load_json(BIRD_DEV_JSON)
-
-
-# ────────────────────────────────────────────────────────────────────────
 # 1.  Atomic mutation operators (return True iff they change the AST)
-# ────────────────────────────────────────────────────────────────────────
 SqlAst = exp.Expression
 
 
@@ -161,7 +155,9 @@ def projection_drop(ast: SqlAst) -> bool:
     """
     Remove a random column from the SELECT list.
     Requires at least 2 columns to avoid creating invalid SQL.
+    Only targets the outer query's SELECT list.
     """
+    # Get outermost SELECT directly
     sel = ast.find(exp.Select)
     if sel and len(sel.expressions) > 1:
         sel.expressions.remove(_rc(sel.expressions))
@@ -174,8 +170,13 @@ def where_predicate_delete(ast: SqlAst) -> bool:
     Remove a random predicate from the WHERE clause.
     Handles compound conditions (AND/OR) by flattening and reconstructing.
     Requires at least 2 predicates to avoid removing the entire WHERE clause.
+    Only targets the outer query's WHERE clause.
     """
-    where = ast.args.get("where")
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where = select.args.get("where")
     if not where:
         return False
 
@@ -193,33 +194,6 @@ def where_predicate_delete(ast: SqlAst) -> bool:
     for p in preds[1:]:
         new_w = exp.and_(new_w, p)
     ast.set("where", exp.Where(this=new_w))
-    return True
-
-
-def having_predicate_delete(ast: SqlAst) -> bool:
-    """
-    Remove a random predicate from the HAVING clause.
-    Handles compound conditions (AND/OR) by flattening and reconstructing.
-    Requires at least 2 predicates to avoid removing the entire HAVING clause.
-    """
-    having = ast.args.get("having")
-    if not having:
-        return False
-
-    def flat(node):
-        if isinstance(node, (exp.And, exp.Or)):
-            return flat(node.left) + flat(node.right)
-        return [node]
-
-    preds = flat(having.this)
-    if len(preds) <= 1:
-        return False
-
-    preds.remove(_rc(preds))
-    new_h = preds[0]
-    for p in preds[1:]:
-        new_h = exp.and_(new_h, p)
-    ast.set("having", exp.Having(this=new_h))
     return True
 
 
@@ -246,21 +220,30 @@ def aggregation_swap(ast: SqlAst) -> bool:
     - AVG ↔ SUM (changes from mean to total)
     - MIN ↔ MAX (changes from smallest to largest)
     - COUNT → SUM (changes from count to sum, often meaningless)
+    Only targets aggregation functions in the outer query's SELECT and HAVING clauses.
     """
-    # Look for specific aggregation function node types
+    # Get outer SELECT statement directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+
+    # Collect aggregation functions from SELECT expressions
     aggs = []
-    aggs.extend(ast.find_all(exp.Count))
-    aggs.extend(ast.find_all(exp.Sum))
-    aggs.extend(ast.find_all(exp.Max))
-    aggs.extend(ast.find_all(exp.Min))
-    aggs.extend(ast.find_all(exp.Avg))
+    for expr in select.expressions:
+        for agg in expr.find_all((exp.Count, exp.Sum, exp.Max, exp.Min, exp.Avg)):
+            aggs.append(agg)
+        for func in expr.find_all(exp.Func):
+            if hasattr(func, "name") and func.name and func.name.lower() in _AGG_SWAP:
+                aggs.append(func)
 
-    # Also check for generic functions that might be aggregations
-    for f in ast.find_all(exp.Func):
-        if hasattr(f, "name") and f.name and f.name.lower() in _AGG_SWAP:
-            aggs.append(f)
-
-    # print(f"Found aggregation functions: {[type(agg).__name__ for agg in aggs]}")
+    # Collect aggregation functions from HAVING clause
+    having = select.args.get("having")
+    if having:
+        for agg in having.find_all((exp.Count, exp.Sum, exp.Max, exp.Min, exp.Avg)):
+            aggs.append(agg)
+        for func in having.find_all(exp.Func):
+            if hasattr(func, "name") and func.name and func.name.lower() in _AGG_SWAP:
+                aggs.append(func)
 
     f = _rc(aggs)
     if f:
@@ -306,17 +289,22 @@ def add_star_wildcard(ast: SqlAst) -> bool:
     This adds extra columns that weren't in the original query.
     Skip if a star is already present to avoid redundancy.
     Prioritizes table alias if available, falls back to table name or bare *.
+    Only targets the outer query's SELECT list and looks for tables only in outer FROM clause.
     """
+    # Get outermost SELECT directly
     sel = ast.find(exp.Select)
     if not sel:
         return False
     if any(isinstance(e, exp.Star) for e in sel.expressions):
         return False
 
-    first_tbl = next(ast.find_all(exp.Table), None)
-    if first_tbl and first_tbl.alias:
+    # Look for tables only in the outer query's FROM clause
+    from_clause = sel.args.get("from")
+    first_tbl = next(iter(from_clause.expressions), None) if from_clause else None
+
+    if isinstance(first_tbl, exp.Table) and first_tbl.alias:
         star = exp.Star(this=exp.Identifier(this=first_tbl.alias))
-    elif first_tbl:
+    elif isinstance(first_tbl, exp.Table):
         star = exp.Star(this=first_tbl.this.copy())
     else:
         star = exp.Star()
@@ -331,7 +319,7 @@ def where_condition_flip(ast: SqlAst) -> bool:
     - = becomes != (equal becomes not equal)
     - > becomes < (greater becomes less)
     - >= becomes <= (greater-or-equal becomes less-or-equal)
-    This is a good alternative when projection operators conflict.
+    Only targets comparison operators in the outer query's WHERE clause.
     """
     flip_map = {
         exp.EQ: exp.NEQ,
@@ -342,8 +330,11 @@ def where_condition_flip(ast: SqlAst) -> bool:
         exp.LTE: exp.GTE,
     }
 
-    # Only look for comparisons in WHERE clause
-    where_clause = ast.args.get("where")
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where_clause = select.args.get("where")
     if not where_clause:
         return False
 
@@ -363,7 +354,7 @@ def having_condition_flip(ast: SqlAst) -> bool:
     - = becomes != (equal becomes not equal)
     - > becomes < (greater becomes less)
     - >= becomes <= (greater-or-equal becomes less-or-equal)
-    This targets aggregate filtering conditions specifically.
+    Only targets comparison operators in the outer query's HAVING clause.
     """
     flip_map = {
         exp.EQ: exp.NEQ,
@@ -374,8 +365,11 @@ def having_condition_flip(ast: SqlAst) -> bool:
         exp.LTE: exp.GTE,
     }
 
-    # Only look for comparisons in HAVING clause
-    having_clause = ast.args.get("having")
+    # Get outer query's HAVING clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    having_clause = select.args.get("having")
     if not having_clause:
         return False
 
@@ -412,12 +406,19 @@ def join_type_to_left(ast: SqlAst) -> bool:
 
 def limit_increase(ast: SqlAst) -> bool:
     """
-    Increase LIMIT clause: adds or increases the limit value.
-    If no LIMIT exists, add one with a random value.
-    If LIMIT exists, increase it to make the query less restrictive.
+    Increase existing LIMIT clause value.
+    Only modifies queries that already have a LIMIT clause.
+    Does NOT add LIMIT to queries that don't have one.
+    Only modifies the outer query's LIMIT clause.
     """
-    current_limit = ast.args.get("limit")
+    # Get outer SELECT statement directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
 
+    current_limit = select.args.get("limit")
+
+    # Only proceed if there's already a LIMIT clause
     if current_limit:
         # Modify existing limit by increasing it
         limit_value = current_limit.args.get("expression")
@@ -425,25 +426,113 @@ def limit_increase(ast: SqlAst) -> bool:
             current_val = int(limit_value.this)
             # Always increase limit (make less restrictive)
             new_value = current_val * 2 + random.randint(1, 5)
-            ast.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+            select.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
             return True
-    else:
-        # No LIMIT exists, add a new one with random value between 10-50
-        ast.set(
-            "limit", exp.Limit(expression=exp.Literal.number(random.randint(10, 50)))
-        )
-        return True
 
+    # Return False if no existing LIMIT clause
     return False
 
 
-def having_remove(ast: SqlAst) -> bool:
+def limit_decrease(ast: SqlAst) -> bool:
     """
-    Remove the HAVING clause completely.
-    This breaks filtering on aggregate results.
+    Decrease existing LIMIT clause value.
+    Only modifies queries that already have a LIMIT clause.
+    Does NOT add LIMIT to queries that don't have one.
+    Only modifies the outer query's LIMIT clause.
     """
-    if ast.args.get("having"):
-        ast.set("having", None)
+    # Get outer SELECT statement directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+
+    current_limit = select.args.get("limit")
+
+    # Only proceed if there's already a LIMIT clause
+    if current_limit:
+        # Modify existing limit by decreasing it
+        limit_value = current_limit.args.get("expression")
+        if isinstance(limit_value, exp.Literal) and limit_value.is_int:
+            current_val = int(limit_value.this)
+            # Always decrease limit (make more restrictive), minimum 1
+            new_value = max(1, current_val // 2)
+            if new_value != current_val:  # Only apply if it actually changes
+                select.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+                return True
+
+    # Return False if no existing LIMIT clause or no change
+    return False
+
+
+def distinct_toggle(ast: SqlAst) -> bool:
+    """
+    Remove DISTINCT keyword from SELECT clause.
+    This can change result set by allowing duplicate rows.
+    Only targets the outer query's SELECT clause.
+    """
+    # Get outer SELECT statement directly
+    select = ast.find(exp.Select)
+    if select and select.args.get("distinct"):
+        select.set("distinct", None)
+        return True
+    return False
+
+
+def where_strengthen(ast: SqlAst) -> bool:
+    """
+    Make WHERE conditions more restrictive by changing boundary conditions:
+    - < becomes <= (less-than becomes less-than-or-equal)
+    - > becomes >= (greater-than becomes greater-than-or-equal)
+    This typically includes more rows in the result set.
+    Only targets comparison operators in the outer query's WHERE clause.
+    """
+    strengthen_map = {
+        exp.LT: exp.LTE,  # < to <=
+        exp.GT: exp.GTE,  # > to >=
+    }
+
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where_clause = select.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*strengthen_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = strengthen_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
+        return True
+    return False
+
+
+def where_weaken(ast: SqlAst) -> bool:
+    """
+    Make WHERE conditions less restrictive by changing boundary conditions:
+    - <= becomes < (less-than-or-equal becomes less-than)
+    - >= becomes > (greater-than-or-equal becomes greater-than)
+    This typically excludes more rows from the result set.
+    Only targets comparison operators in the outer query's WHERE clause.
+    """
+    weaken_map = {
+        exp.LTE: exp.LT,  # <= to <
+        exp.GTE: exp.GT,  # >= to >
+    }
+
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where_clause = select.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*weaken_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = weaken_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
         return True
     return False
 
@@ -451,10 +540,25 @@ def having_remove(ast: SqlAst) -> bool:
 def where_remove(ast: SqlAst) -> bool:
     """
     Remove the WHERE clause completely.
-    This breaks filtering on regular columns and often returns more rows.
+    This removes all filtering conditions from the outer query.
+    Only targets the outer query's WHERE clause.
     """
-    if ast.args.get("where"):
-        ast.set("where", None)
+    select = ast.find(exp.Select)
+    if select and select.args.get("where"):
+        select.set("where", None)
+        return True
+    return False
+
+
+def having_remove(ast: SqlAst) -> bool:
+    """
+    Remove the HAVING clause completely.
+    This breaks filtering on aggregate results.
+    Only targets the outer query's HAVING clause.
+    """
+    select = ast.find(exp.Select)
+    if select and select.args.get("having"):
+        select.set("having", None)
         return True
     return False
 
@@ -464,35 +568,43 @@ OPERATORS: Dict[str, callable] = {
     "projection_drop": projection_drop,
     "where_predicate_delete": where_predicate_delete,
     "where_remove": where_remove,
-    "having_predicate_delete": having_predicate_delete,
+    "where_condition_flip": where_condition_flip,
+    "where_strengthen": where_strengthen,
+    "where_weaken": where_weaken,
     "join_break": join_break,
     "aggregation_swap": aggregation_swap,
     "add_star_wildcard": add_star_wildcard,
-    "where_condition_flip": where_condition_flip,
     "having_condition_flip": having_condition_flip,
+    "having_remove": having_remove,
     "join_type_to_left": join_type_to_left,
     "limit_increase": limit_increase,
-    "having_remove": having_remove,
+    "limit_decrease": limit_decrease,
+    "distinct_toggle": distinct_toggle,
 }
 OP_NAMES = tuple(OPERATORS.keys())
 
 
-# ────────────────────────────────────────────────────────────────────────
 # 2.  Define operator conflicts (operators that shouldn't be used together)
-# ────────────────────────────────────────────────────────────────────────
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
     "projection_drop": {"projection_drop"},
     "add_star_wildcard": {"add_star_wildcard"},
     "where_predicate_delete": {"where_predicate_delete"},
     "where_remove": {"where_remove"},
-    "having_predicate_delete": {"having_predicate_delete"},
+    "where_condition_flip": {
+        "where_condition_flip",
+        "where_strengthen",
+        "where_weaken",
+    },
+    "where_strengthen": {"where_strengthen", "where_condition_flip", "where_weaken"},
+    "where_weaken": {"where_weaken", "where_condition_flip", "where_strengthen"},
+    "having_remove": {"having_remove"},
+    "having_condition_flip": {"having_condition_flip"},
     "join_break": {"join_break"},
     "join_type_to_left": {"join_type_to_left"},
     "aggregation_swap": {"aggregation_swap"},
-    "where_condition_flip": {"where_condition_flip"},
-    "having_condition_flip": {"having_condition_flip"},
-    "limit_increase": {"limit_increase"},
-    "having_remove": {"having_remove"},
+    "limit_increase": {"limit_increase", "limit_decrease"},
+    "limit_decrease": {"limit_decrease", "limit_increase"},
+    "distinct_toggle": {"distinct_toggle"},
 }
 
 
@@ -505,9 +617,7 @@ def has_conflict(op: str, existing_ops: List[str]) -> bool:
     return any(existing_op in conflicts for existing_op in existing_ops)
 
 
-# ────────────────────────────────────────────────────────────────────────
 # 3.  Apply a sequence; discard if any op is a no-op or net-no-change
-# ────────────────────────────────────────────────────────────────────────
 def apply_sequence(sql: str, seq: Tuple[str, ...]) -> str | None:
     """
     Apply operators in the given order.
@@ -583,10 +693,10 @@ def apply_single_operator(sql: str, op: str) -> str | None:
         return None
 
 
-# ────────────────────────────────────────────────────────────────────────
 # 4.  Generate mutants with sequential error addition (depth-based)
-# ────────────────────────────────────────────────────────────────────────
 def generate_mutation_suite(
+    dataset: list,
+    max_depth: int,
     seed: int = 42,
 ) -> List[dict]:
     """
@@ -605,6 +715,8 @@ def generate_mutation_suite(
     builds upon the previous mutations' effects.
 
     Args:
+        dataset: List of SQL items to mutate
+        max_depth: Maximum mutation depth
         seed: Random seed for reproducible results (used in operator internals)
 
     Returns:
@@ -613,7 +725,7 @@ def generate_mutation_suite(
     random.seed(seed)
     mutants: List[dict] = []
 
-    for item in BIRD_DEV:
+    for item in dataset:
         sql, qid, db = item["SQL"], item["question_id"], item["db_id"]
 
         # Try EVERY operator as a starting point (depth=1)
@@ -639,7 +751,7 @@ def generate_mutation_suite(
         # For depth 2 and 3, build upon each valid sequence from previous depth
         current_sequences = valid_sequences_with_sql.copy()
 
-        for depth in range(2, MAX_DEPTH + 1):
+        for depth in range(2, max_depth + 1):
             next_sequences = []
             for sequence, current_sql in current_sequences:
                 # Try adding EVERY possible next operator to the CURRENT SQL
@@ -672,17 +784,27 @@ def generate_mutation_suite(
     return mutants
 
 
-# ────────────────────────────────────────────────────────────────────────
-# 5.  Entry-point – build and save mutants.json
-# ────────────────────────────────────────────────────────────────────────
-def main():
-    """
-    Main function to generate mutants with sequential error addition
-    and save them to a JSON file.
-    """
+if __name__ == "__main__":
+    BIRD_DEV_JSON = "data/benchmarks/Bird/bird_dev.json"
+    OUT_DIR = "data/metrics/experiments/controlled_error_sensitivity"
+    OUT_FILE = OUT_DIR + "/mutants_depth1.json"
+    MAX_DEPTH = 1  # Set this value to the desired max depth
+    RANDOM_SEED = 42  # Random seed for reproducible results
+
+    # Load dataset here instead of globally
+    bird_dev = load_json(BIRD_DEV_JSON)
+
     print("Generating mutants with sequential error addition …")
     print("Systematically trying all possible operators at each depth level")
-    suite = generate_mutation_suite()
+    print(f"Maximum mutation depth: {MAX_DEPTH}")
+    print(
+        "Note: All mutations target ONLY the outer query structure, subqueries are preserved"
+    )
+
+    suite = generate_mutation_suite(
+        dataset=bird_dev, max_depth=MAX_DEPTH, seed=RANDOM_SEED
+    )
+
     print(f"Generated {len(suite):,} mutants")
 
     # Print depth distribution
@@ -695,11 +817,8 @@ def main():
     for depth in sorted(depth_counts.keys()):
         print(f"  Depth {depth}: {depth_counts[depth]:,} mutants")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    with OUT_FILE.open("w") as f:
+    # Create output directory and save results
+    Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+    with open(OUT_FILE, "w") as f:
         json.dump(suite, f, indent=2)
     print(f"Mutants written to {OUT_FILE}")
-
-
-if __name__ == "__main__":
-    main()

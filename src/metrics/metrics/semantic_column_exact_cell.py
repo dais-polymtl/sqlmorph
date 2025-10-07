@@ -23,6 +23,7 @@ logger = Logger(__name__)
 
 def execute_query(context):
     logger.log("debug", "function execute_query called")
+    db_handler = None
     try:
         db_handler = DatabaseHandler(
             dbms=context["db_params"]["dbms"], connection_params=context["db_params"]
@@ -54,6 +55,9 @@ def execute_query(context):
             }
         )
         return context
+    finally:
+        if db_handler:
+            db_handler.close_connection()
 
 
 def check_ex(context: dict):
