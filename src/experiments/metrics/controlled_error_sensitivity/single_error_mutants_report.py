@@ -205,7 +205,7 @@ def process_data_to_csv(techniques, output_path):
 
 
 if __name__ == "__main__":
-    experiment_name = "single_error_without_penalty-2025-09-30_3"
+    experiment_name = "2025-10-06_single_error_without_penalty"
     SCORES_DIR = Path(
         f"data/metrics/experiments/controlled_error_sensitivity/scores/{experiment_name}"
     )

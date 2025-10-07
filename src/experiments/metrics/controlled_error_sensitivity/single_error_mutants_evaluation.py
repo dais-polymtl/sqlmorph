@@ -6,15 +6,15 @@ Process
 ───────
 1. Load mutants from mutants.json
 2. Filter to only depth=1 mutants (single operator mutations)
-3. Apply smart sampling by specific operators and complete question_id groups
-4. For each evaluation technique (6 techniques including EXECUTION_ACCURACY):
-   - Iterate through all depth=1 mutants sequentially
+3. For each operator:
+   - Apply smart sampling by evaluating with EXECUTION_ACCURACY
+   - Keep only mutants with EX==0 until reaching sample_size
+4. For each evaluation technique (multiple techniques):
+   - Evaluate the filtered mutants for each operator
    - Use func_timeout for timeout enforcement (≤ 120s per query)
-   - Apply quality filtering to remove problematic questions with EX=1
+   - Apply quality filtering to remove problematic questions
    - Generate technique-specific output file
-   - Calculate and display summary statistics including operator distribution
-5. Each mutant is evaluated with func_timeout for timeout control
-6. Results are saved as separate JSON files per technique in the scores/{experiment_name} directory
+5. Results are saved as separate JSON files per technique in the scores/{experiment_name} directory
 """
 
 from __future__ import annotations
@@ -113,30 +113,83 @@ def filter_by_specific_operators(
     return filtered_mutants
 
 
+def evaluate_with_execution_accuracy(
+    mutant: dict, dev_db_root: str, per_query_timeout: int, log_enabled: bool
+) -> tuple:
+    """
+    Evaluate a single mutant with EXECUTION_ACCURACY to check if EX==0.
+
+    Args:
+        mutant: Mutant dictionary containing SQL and metadata
+        dev_db_root: Path to development databases
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether logging is enabled
+
+    Returns:
+        (mutant_with_ex_score, is_suitable) where is_suitable is True if EX==0
+    """
+    # Create config for EXECUTION_ACCURACY evaluation
+    cfg = {
+        "evaluation_technique": EvaluationTechnique.EXECUTION_ACCURACY,
+        "db_params": {
+            "dbms": DBMS.SQLITE,
+            "db_path": str(
+                Path(dev_db_root) / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
+            ),
+        },
+        "embedding_model": None,  # Not needed for EXECUTION_ACCURACY
+        "penalize_extra_pred_cols": True,
+        "logs_dir_path": "logs",
+    }
+
+    # Use func_timeout for evaluation
+    try:
+        scored_mutant = score_one_mutant(
+            copy.deepcopy(mutant),
+            cfg,
+            dev_db_root,
+            per_query_timeout,
+            log_enabled,
+        )
+        is_suitable = scored_mutant.get("EX") == 0
+        return scored_mutant, is_suitable
+    except Exception:
+        return copy.deepcopy(mutant), False
+
+
 def smart_sample_mutants(
     mutants: List[Dict],
     sample_size: int = None,
     specific_operators: List[str] = None,
     random_seed: int = 42,
-) -> List[Dict]:
+    dev_db_root: str = None,
+    per_query_timeout: int = 30,
+    log_enabled: bool = False,
+) -> Dict[str, List[Dict]]:
     """
-    Apply smart sampling that maintains complete question_id groups and filters by specific operators.
-    Only includes mutants with depth=1 (single operator mutations).
+    Apply smart sampling that evaluates mutants with EXECUTION_ACCURACY
+    and keeps only those with EX==0.
 
     Sampling strategy:
     1. Filter to only depth=1 mutants (single operator mutations)
     2. If specific_operators is set, filter to only include those specific operators
-    3. From each operator group, sample up to sample_size question groups
-    4. This ensures a diverse set of mutants across different operators
+    3. Group mutants by operator
+    4. For each operator group:
+       - Shuffle mutants using the random seed
+       - Evaluate each mutant with EXECUTION_ACCURACY until finding sample_size with EX==0
+       - Keep tracked of the evaluated mutants with EX==0
 
     Args:
         mutants: List of all mutants
         sample_size: Target number of mutants per operator (None = all)
         specific_operators: List of operators to filter by
         random_seed: Base random seed for reproducible sampling
+        dev_db_root: Path to development databases
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether logging is enabled
 
     Returns:
-        List of sampled mutants maintaining complete question groups, depth=1 only
+        Dictionary mapping operator to list of sampled mutants with EX==0
     """
     print(f"Original: {len(mutants)} mutants")
 
@@ -145,7 +198,8 @@ def smart_sample_mutants(
     print(f"Filtered to depth=1: {len(depth_1_mutants)} mutants")
 
     if sample_size is None and not specific_operators:
-        return depth_1_mutants
+        # Group by operator and return all depth=1 mutants
+        return group_mutants_by_operator(depth_1_mutants)
 
     mutants = depth_1_mutants
 
@@ -157,50 +211,56 @@ def smart_sample_mutants(
         )
         mutants = filtered_mutants
 
-    # If we don't need to sample by size, return all filtered mutants
+    # If we don't need to sample by size, just group by operator and return
     if sample_size is None:
-        return mutants
+        return group_mutants_by_operator(mutants)
 
-    # Group by operator first, then by question_id
-    operator_groups = defaultdict(list)
-    for mutant in mutants:
-        if "operators" in mutant and mutant["operators"]:
-            operator = mutant["operators"][0]
-            operator_groups[operator].append(mutant)
+    # Group by operator first
+    operator_groups = group_mutants_by_operator(mutants)
+    sampled_operator_groups = {}
 
-    sampled_mutants = []
-
-    # For each operator group, sample up to sample_size question groups
+    # For each operator, sample mutants with EX==0
     for operator, operator_mutants in operator_groups.items():
-        # Group by question_id
-        question_groups = group_mutants_by_question(operator_mutants)
+        print(f"  → Sampling from {len(operator_mutants)} '{operator}' mutants")
 
-        # Calculate how many question groups to sample
-        if len(question_groups) <= sample_size:
-            # If we have fewer question groups than the sample size, take all of them
-            sampled_question_ids = list(question_groups.keys())
-        else:
-            # Otherwise, randomly sample question groups
-            random.seed(
-                random_seed + hash(operator)
-            )  # Different seed per operator for diversity
-            sampled_question_ids = random.sample(
-                list(question_groups.keys()), sample_size
+        # Shuffle mutants using the random seed for this operator
+        random.seed(
+            random_seed + hash(operator)
+        )  # Different seed per operator for diversity
+        shuffled_mutants = copy.deepcopy(operator_mutants)
+        random.shuffle(shuffled_mutants)
+
+        sampled_mutants = []
+        evaluated_count = 0
+
+        # Evaluate mutants until we find enough with EX==0
+        for mutant in tqdm(shuffled_mutants, desc=f"  Sampling {operator}", ncols=80):
+            evaluated_count += 1
+            scored_mutant, is_suitable = evaluate_with_execution_accuracy(
+                mutant, dev_db_root, per_query_timeout, log_enabled
             )
 
-        # Collect all mutants from sampled questions
-        for question_id in sampled_question_ids:
-            sampled_mutants.extend(question_groups[question_id])
+            if is_suitable:
+                sampled_mutants.append(scored_mutant)
+                if len(sampled_mutants) >= sample_size:
+                    break
 
-        print(
-            f"  → Operator '{operator}': {len([m for m in sampled_mutants if m.get('operators', [None])[0] == operator])} mutants from {len(sampled_question_ids)} questions"
-        )
+        # Store the sampled mutants for this operator
+        if sampled_mutants:
+            sampled_operator_groups[operator] = sampled_mutants
+            print(
+                f"  → Selected {len(sampled_mutants)}/{evaluated_count} mutants with EX==0 for '{operator}'"
+            )
+        else:
+            print(f"  → WARNING: No suitable mutants found for '{operator}'")
 
+    # Print summary of sampled mutants by operator
+    total_sampled = sum(len(mutants) for mutants in sampled_operator_groups.values())
     print(
-        f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions (all depth=1)"
+        f"Sampled: {total_sampled} mutants across {len(sampled_operator_groups)} operators (all depth=1)"
     )
 
-    return sampled_mutants
+    return sampled_operator_groups
 
 
 def filter_problematic_questions(mutants: List[Dict]) -> List[Dict]:
@@ -428,9 +488,10 @@ def main():
 
     Process:
     1. Load mutants from single_operator_mutants.json
-    2. Apply smart sampling (by specific operators and question_groups) and quality filtering
+    2. Apply smart sampling by filtering each operator's mutants with EXECUTION_ACCURACY
+       and keeping only those with EX==0
     3. For each evaluation technique:
-       - Iterate through all mutants sequentially
+       - Evaluate the filtered mutants for each operator
        - Use func_timeout for timeout protection
        - Apply quality filtering (remove questions with EX=1)
        - Save technique-specific results
@@ -447,20 +508,26 @@ def main():
 
     print(f"Loaded {len(all_mutants):,} total mutants")
 
-    # Apply smart sampling by specific operators and question groups
-    sampled_mutants = smart_sample_mutants(
-        all_mutants, SAMPLE_SIZE, SPECIFIC_OPERATORS, RANDOM_SEED
+    # Apply smart sampling by filtering with EXECUTION_ACCURACY (EX==0)
+    sampled_operator_groups = smart_sample_mutants(
+        all_mutants,
+        SAMPLE_SIZE,
+        SPECIFIC_OPERATORS,
+        RANDOM_SEED,
+        DEV_DB_ROOT,
+        PER_QUERY_TIMEOUT,
+        LOG,
     )
 
-    # Show operator distribution before evaluation
-    operator_counts = defaultdict(int)
-    for mutant in sampled_mutants:
-        if "operators" in mutant and mutant["operators"]:
-            operator_counts[mutant["operators"][0]] += 1
+    # Flatten the operator groups for overall statistics
+    sampled_mutants = []
+    for operator_mutants in sampled_operator_groups.values():
+        sampled_mutants.extend(operator_mutants)
 
-    print("\nOperator distribution in sampled mutants:")
-    for operator, count in sorted(operator_counts.items()):
-        print(f"  → {operator}: {count} mutants")
+    # Show operator distribution after sampling
+    print("\nOperator distribution in sampled mutants with EX==0:")
+    for operator, operator_mutants in sorted(sampled_operator_groups.items()):
+        print(f"  → {operator}: {len(operator_mutants)} mutants")
 
     # Display configuration
     print("\nConfiguration:")
@@ -477,25 +544,49 @@ def main():
     # Evaluate with each technique and save separate results
     print(f"\nEvaluating with {len(EVALUATION_TECHNIQUES)} different techniques:")
 
+    # For each evaluation technique
     for i, technique in enumerate(EVALUATION_TECHNIQUES, 1):
         technique_name = get_technique_name(technique)
         print(f"\n[{i}/{len(EVALUATION_TECHNIQUES)}] {technique.name}")
 
-        # Run evaluation for this technique (includes quality filtering)
-        scored_mutants = evaluate_with_technique(
-            sampled_mutants,
-            technique,
-            EMBEDDING_MODEL,
-            PENALIZE_EXTRA_PRED_COLS,
-            LOGS_DIR,
-            DEV_DB_ROOT,
-            PER_QUERY_TIMEOUT,
-            LOG,
-        )
+        all_scored_mutants = []
+
+        # For each operator, evaluate its filtered mutants with this technique
+        for operator, operator_mutants in sampled_operator_groups.items():
+            print(f"  → Evaluating {len(operator_mutants)} '{operator}' mutants")
+
+            # Run evaluation for this technique and operator
+            scored_mutants = evaluate_with_technique(
+                operator_mutants,
+                technique,
+                EMBEDDING_MODEL,
+                PENALIZE_EXTRA_PRED_COLS,
+                LOGS_DIR,
+                DEV_DB_ROOT,
+                PER_QUERY_TIMEOUT,
+                LOG,
+            )
+
+            # Add to all scored mutants
+            all_scored_mutants.extend(scored_mutants)
+
+            # Show operator-specific results
+            successful_op_evals = [m for m in scored_mutants if m.get("EX") is not None]
+            if successful_op_evals:
+                avg_ex = sum(m["EX"] for m in successful_op_evals) / len(
+                    successful_op_evals
+                )
+                avg_f1 = sum(m["F1"] for m in successful_op_evals) / len(
+                    successful_op_evals
+                )
+                print(
+                    f"    • Success rate: {len(successful_op_evals)}/{len(scored_mutants)} mutants"
+                )
+                print(f"    • Avg EX: {avg_ex:.3f}, Avg F1: {avg_f1:.3f}")
 
         # Show operator distribution after evaluation and filtering
         final_operator_counts = defaultdict(int)
-        for mutant in scored_mutants:
+        for mutant in all_scored_mutants:
             if "operators" in mutant and mutant["operators"]:
                 final_operator_counts[mutant["operators"][0]] += 1
 
@@ -508,11 +599,11 @@ def main():
         out_file.parent.mkdir(parents=True, exist_ok=True)
 
         with out_file.open("w") as f:
-            json.dump(scored_mutants, f, indent=2)
+            json.dump(all_scored_mutants, f, indent=2)
 
         # Calculate summary statistics
-        successful_evals = [m for m in scored_mutants if m.get("EX") is not None]
-        failed_evals = len(scored_mutants) - len(successful_evals)
+        successful_evals = [m for m in all_scored_mutants if m.get("EX") is not None]
+        failed_evals = len(all_scored_mutants) - len(successful_evals)
 
         if successful_evals:
             avg_ex = sum(m["EX"] for m in successful_evals) / len(successful_evals)
@@ -521,24 +612,17 @@ def main():
                 successful_evals
             )
 
-            # Calculate depth distribution
-            depth_counts = {}
-            for m in successful_evals:
-                depth = m.get("depth", "unknown")
-                depth_counts[depth] = depth_counts.get(depth, 0) + 1
-
             print(f"  → Results saved to {out_file.name}")
             print(
-                f"  → Final dataset: {len(scored_mutants)} mutants across "
-                f"{len(set(m['question_id'] for m in scored_mutants))} questions"
+                f"  → Final dataset: {len(all_scored_mutants)} mutants across "
+                f"{len(set(m['question_id'] for m in all_scored_mutants))} questions"
             )
             print(
-                f"  → Success rate: {len(successful_evals)}/{len(scored_mutants)} "
-                f"({100 * len(successful_evals) / len(scored_mutants):.1f}%)"
+                f"  → Success rate: {len(successful_evals)}/{len(all_scored_mutants)} "
+                f"({100 * len(successful_evals) / len(all_scored_mutants):.1f}%)"
             )
             if failed_evals > 0:
                 print(f"  → Failed evaluations: {failed_evals}")
-            print(f"  → Depth distribution: {dict(sorted(depth_counts.items()))}")
             print(f"  → Average EX: {avg_ex:.3f}")
             print(f"  → Average F1: {avg_f1:.3f}")
             print(f"  → Average latency: {avg_latency:.2f}s")
@@ -557,7 +641,7 @@ def main():
 # Entry-point
 if __name__ == "__main__":
     # Paths and directories
-    experiment_name = "single_error_without_penalty-2025-09-30_3"
+    experiment_name = "2025-10-06_single_error_with_penalty"
     DEV_DB_ROOT = "data/benchmarks/Bird/dev_databases"
     MUTANTS_JSON = (
         "data/metrics/experiments/controlled_error_sensitivity/mutants_depth1.json"
@@ -569,33 +653,38 @@ if __name__ == "__main__":
 
     # Multiple evaluation techniques to compare mutation impact across different metrics
     EVALUATION_TECHNIQUES = [
-        # EvaluationTechnique.EXECUTION_ACCURACY,
-        # EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
-        # EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
-        # EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
         EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
         EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
     ]
 
     EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
-    PENALIZE_EXTRA_PRED_COLS = False  # Whether to penalize extra predicted columns
+    PENALIZE_EXTRA_PRED_COLS = True  # Whether to penalize extra predicted columns
     RANDOM_SEED = 42  # Base random seed for reproducible sampling
 
-    SAMPLE_SIZE = 20  # None → score all mutants; small int for quick test (applied to question groups)
+    SAMPLE_SIZE = (
+        25  # None → score all mutants; small int for quick test (applied per operator)
+    )
 
     # List of specific operators to evaluate - focusing on outer query structure only
     SPECIFIC_OPERATORS = [
-        "projection_drop",  # Remove columns from SELECT (outer query)
+        "projection_drop",  # Remove columns from SELECT
+        "where_predicate_delete",  # Remove WHERE conditions
+        "where_remove",  # Remove entire WHERE clause
+        "where_condition_flip",  # Flip WHERE conditions
+        "where_strengthen",  # Strengthen WHERE conditions
+        "where_weaken",  # Weaken WHERE conditions (outer query)
+        "join_break",  # Break JOIN relationships (outer query)
+        "aggregation_swap",  # Swap aggregation functions
         "add_star_wildcard",  # Add SELECT * (outer query)
-        "where_predicate_delete",  # Remove WHERE conditions (outer query)
-        "where_condition_flip",  # Flip WHERE conditions (outer query)
-        "where_remove",  # Remove entire WHERE clause (outer query)
         "having_condition_flip",  # Flip HAVING conditions (outer query)
         "having_remove",  # Remove entire HAVING clause (outer query)
-        "join_break",  # Break JOIN relationships (outer query)
-        "join_type_to_left",  # Change JOIN types (outer query)
-        "aggregation_swap",  # Swap aggregation functions (outer query)
-        "limit_increase",  # Modify LIMIT clause (outer query)
+        "join_type_to_left",  # Change JOIN types
+        "limit_increase",  # Increase LIMIT clause
+        "limit_decrease",  # Decrease LIMIT clause
+        "distinct_toggle",  # Toggle DISTINCT in SELECT
     ]
 
     PER_QUERY_TIMEOUT = 30  # wall-clock seconds per individual query evaluation
