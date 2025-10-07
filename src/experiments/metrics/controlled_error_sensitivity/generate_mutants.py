@@ -59,15 +59,18 @@ any nested subqueries untouched.
 
 Mutation Operators
 ──────────────────
-We implement 12 atomic mutation operators that target different SQL components:
+We implement 16 atomic mutation operators that target different SQL components:
 
 **SELECT Clause Mutations:**
 • `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
 • `add_star_wildcard` — Adds * or alias.* to SELECT list
+• `distinct_toggle` — Removes DISTINCT keyword from SELECT clause
 
 **WHERE Clause Mutations:**
 • `where_predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
 • `where_condition_flip` — Flips comparison operators in WHERE clauses (=↔!=, >↔<, >=↔<=)
+• `where_strengthen` — Makes WHERE conditions more restrictive (< to <=, > to >=)
+• `where_weaken` — Makes WHERE conditions less restrictive (<= to <, >= to >)
 • `where_remove` — Removes the WHERE clause completely
 
 **HAVING Clause Mutations:**
@@ -82,7 +85,8 @@ We implement 12 atomic mutation operators that target different SQL components:
 • `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
 
 **Result Limiting Mutations:**
-• `limit_increase` — Adds or increases LIMIT clause (makes it less restrictive)
+• `limit_increase` — Increases existing LIMIT clause (makes it less restrictive)
+• `limit_decrease` — Decreases existing LIMIT clause (makes it more restrictive)
 
 Operator Conflicts
 ──────────────────
@@ -190,38 +194,6 @@ def where_predicate_delete(ast: SqlAst) -> bool:
     for p in preds[1:]:
         new_w = exp.and_(new_w, p)
     ast.set("where", exp.Where(this=new_w))
-    return True
-
-
-def having_predicate_delete(ast: SqlAst) -> bool:
-    """
-    Remove a random predicate from the HAVING clause.
-    Handles compound conditions (AND/OR) by flattening and reconstructing.
-    Requires at least 2 predicates to avoid removing the entire HAVING clause.
-    Only targets the outer query's HAVING clause.
-    """
-    # Get outer query's HAVING clause directly
-    select = ast.find(exp.Select)
-    if not select:
-        return False
-    having = select.args.get("having")
-    if not having:
-        return False
-
-    def flat(node):
-        if isinstance(node, (exp.And, exp.Or)):
-            return flat(node.left) + flat(node.right)
-        return [node]
-
-    preds = flat(having.this)
-    if len(preds) <= 1:
-        return False
-
-    preds.remove(_rc(preds))
-    new_h = preds[0]
-    for p in preds[1:]:
-        new_h = exp.and_(new_h, p)
-    ast.set("having", exp.Having(this=new_h))
     return True
 
 
@@ -461,16 +433,106 @@ def limit_increase(ast: SqlAst) -> bool:
     return False
 
 
-def having_remove(ast: SqlAst) -> bool:
+def limit_decrease(ast: SqlAst) -> bool:
     """
-    Remove the HAVING clause completely.
-    This breaks filtering on aggregate results.
-    Only targets the outer query's HAVING clause.
+    Decrease existing LIMIT clause value.
+    Only modifies queries that already have a LIMIT clause.
+    Does NOT add LIMIT to queries that don't have one.
+    Only modifies the outer query's LIMIT clause.
     """
     # Get outer SELECT statement directly
     select = ast.find(exp.Select)
-    if select and select.args.get("having"):
-        select.set("having", None)
+    if not select:
+        return False
+
+    current_limit = select.args.get("limit")
+
+    # Only proceed if there's already a LIMIT clause
+    if current_limit:
+        # Modify existing limit by decreasing it
+        limit_value = current_limit.args.get("expression")
+        if isinstance(limit_value, exp.Literal) and limit_value.is_int:
+            current_val = int(limit_value.this)
+            # Always decrease limit (make more restrictive), minimum 1
+            new_value = max(1, current_val // 2)
+            if new_value != current_val:  # Only apply if it actually changes
+                select.set("limit", exp.Limit(expression=exp.Literal.number(new_value)))
+                return True
+
+    # Return False if no existing LIMIT clause or no change
+    return False
+
+
+def distinct_toggle(ast: SqlAst) -> bool:
+    """
+    Remove DISTINCT keyword from SELECT clause.
+    This can change result set by allowing duplicate rows.
+    Only targets the outer query's SELECT clause.
+    """
+    # Get outer SELECT statement directly
+    select = ast.find(exp.Select)
+    if select and select.args.get("distinct"):
+        select.set("distinct", None)
+        return True
+    return False
+
+
+def where_strengthen(ast: SqlAst) -> bool:
+    """
+    Make WHERE conditions more restrictive by changing boundary conditions:
+    - < becomes <= (less-than becomes less-than-or-equal)
+    - > becomes >= (greater-than becomes greater-than-or-equal)
+    This typically includes more rows in the result set.
+    Only targets comparison operators in the outer query's WHERE clause.
+    """
+    strengthen_map = {
+        exp.LT: exp.LTE,  # < to <=
+        exp.GT: exp.GTE,  # > to >=
+    }
+
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where_clause = select.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*strengthen_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = strengthen_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
+        return True
+    return False
+
+
+def where_weaken(ast: SqlAst) -> bool:
+    """
+    Make WHERE conditions less restrictive by changing boundary conditions:
+    - <= becomes < (less-than-or-equal becomes less-than)
+    - >= becomes > (greater-than-or-equal becomes greater-than)
+    This typically excludes more rows from the result set.
+    Only targets comparison operators in the outer query's WHERE clause.
+    """
+    weaken_map = {
+        exp.LTE: exp.LT,  # <= to <
+        exp.GTE: exp.GT,  # >= to >
+    }
+
+    # Get outer query's WHERE clause directly
+    select = ast.find(exp.Select)
+    if not select:
+        return False
+    where_clause = select.args.get("where")
+    if not where_clause:
+        return False
+
+    comparisons = [node for node in where_clause.find_all(*weaken_map.keys())]
+    comp = _rc(comparisons)
+    if comp:
+        new_type = weaken_map[type(comp)]
+        comp.replace(new_type(this=comp.this, expression=comp.expression))
         return True
     return False
 
@@ -478,13 +540,25 @@ def having_remove(ast: SqlAst) -> bool:
 def where_remove(ast: SqlAst) -> bool:
     """
     Remove the WHERE clause completely.
-    This breaks filtering on regular columns and often returns more rows.
+    This removes all filtering conditions from the outer query.
     Only targets the outer query's WHERE clause.
     """
-    # Get outer SELECT statement directly
     select = ast.find(exp.Select)
     if select and select.args.get("where"):
         select.set("where", None)
+        return True
+    return False
+
+
+def having_remove(ast: SqlAst) -> bool:
+    """
+    Remove the HAVING clause completely.
+    This breaks filtering on aggregate results.
+    Only targets the outer query's HAVING clause.
+    """
+    select = ast.find(exp.Select)
+    if select and select.args.get("having"):
+        select.set("having", None)
         return True
     return False
 
@@ -494,32 +568,43 @@ OPERATORS: Dict[str, callable] = {
     "projection_drop": projection_drop,
     "where_predicate_delete": where_predicate_delete,
     "where_remove": where_remove,
+    "where_condition_flip": where_condition_flip,
+    "where_strengthen": where_strengthen,
+    "where_weaken": where_weaken,
     "join_break": join_break,
     "aggregation_swap": aggregation_swap,
     "add_star_wildcard": add_star_wildcard,
-    "where_condition_flip": where_condition_flip,
     "having_condition_flip": having_condition_flip,
+    "having_remove": having_remove,
     "join_type_to_left": join_type_to_left,
     "limit_increase": limit_increase,
-    "having_remove": having_remove,
+    "limit_decrease": limit_decrease,
+    "distinct_toggle": distinct_toggle,
 }
 OP_NAMES = tuple(OPERATORS.keys())
 
 
 # 2.  Define operator conflicts (operators that shouldn't be used together)
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
-    # "projection_drop": {"projection_drop"},
+    "projection_drop": {"projection_drop"},
     "add_star_wildcard": {"add_star_wildcard"},
-    # "where_predicate_delete": {"where_predicate_delete"},
+    "where_predicate_delete": {"where_predicate_delete"},
     "where_remove": {"where_remove"},
-    "where_condition_flip": {"where_condition_flip"},
-    # "having_predicate_delete": {"having_predicate_delete"},
+    "where_condition_flip": {
+        "where_condition_flip",
+        "where_strengthen",
+        "where_weaken",
+    },
+    "where_strengthen": {"where_strengthen", "where_condition_flip", "where_weaken"},
+    "where_weaken": {"where_weaken", "where_condition_flip", "where_strengthen"},
     "having_remove": {"having_remove"},
     "having_condition_flip": {"having_condition_flip"},
     "join_break": {"join_break"},
     "join_type_to_left": {"join_type_to_left"},
     "aggregation_swap": {"aggregation_swap"},
-    "limit_increase": {"limit_increase"},
+    "limit_increase": {"limit_increase", "limit_decrease"},
+    "limit_decrease": {"limit_decrease", "limit_increase"},
+    "distinct_toggle": {"distinct_toggle"},
 }
 
 
