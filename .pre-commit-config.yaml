@@ -5,7 +5,7 @@ repos:
       - id: ruff
         types_or: [python, pyi]
         args: [--fix]
-        exclude: '__init__.py$|.*\.ipynb$'  
+        exclude: '__init__.py$|.*\.ipynb$|^src/augmentation/snail/naturalness_classifiers/'
 
   - repo: https://github.com/psf/black
     rev: 25.1.0
