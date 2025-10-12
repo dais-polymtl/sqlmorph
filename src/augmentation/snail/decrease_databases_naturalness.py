@@ -21,7 +21,7 @@ def generate_less_natural_name(
 
     # Initialize prompt renderer
     prompt_renderer = PromptRenderer(
-        templates_dir_path="src/augmentation/snail/prompts/"
+        templates_dir_path="src/augmentation/snail/prompts_templates/"
     )
 
     # Initialize LLM
