@@ -340,7 +340,7 @@ def validate_changes(db_ids, output_root, db_mappings):
 if __name__ == "__main__":
     # Configuration
     input_root = "data/benchmarks/Bird/dev_databases"
-    output_root = "data/benchmarks/Bird/new_dev_databases"
+    output_root = "data/augmentation/snail/new_dev_databases"
     csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
 
     # List of database IDs to process

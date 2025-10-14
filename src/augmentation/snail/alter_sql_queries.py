@@ -2,19 +2,41 @@ import json
 import pandas as pd
 import re
 from tqdm import tqdm
+import signal
+from contextlib import contextmanager
+
+from src.core.database.database_handler import DatabaseHandler
+from src.core.database.database_handler import DBMS
 
 
-def read_name_mapping(csv_path):
+@contextmanager
+def timeout(seconds):
+    """Context manager for timeout handling."""
+
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+
+    # Set the signal handler
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(seconds)
+
+    try:
+        yield
+    finally:
+        signal.alarm(0)  # Disable the alarm
+
+
+def read_name_mapping(mapping_csv_path):
     """
     Read the name mapping CSV file and organize it by database ID.
 
     Args:
-        csv_path (str): Path to the CSV file containing name mappings
+        mapping_csv_path (str): Path to the CSV file containing name mappings
 
     Returns:
         dict: Mapping by db_id with table and column name mappings
     """
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(mapping_csv_path)
 
     db_mappings = {}
 
@@ -78,15 +100,53 @@ def replace_sql_names(sql_query, table_mappings, column_mappings):
         for pattern, replacement in zip(patterns, replacements):
             updated_sql = re.sub(pattern, replacement, updated_sql, flags=re.IGNORECASE)
 
-    # Replace column names
+    # Replace column names - but avoid aggregation functions and ORDER BY
     for old_column, new_column in column_mappings.items():
-        # Handle both quoted and unquoted column names
-        patterns = [
-            rf"\b{re.escape(old_column)}\b",  # Unquoted column name
-            rf"`{re.escape(old_column)}`",  # Backtick quoted
-            rf'"{re.escape(old_column)}"',  # Double quoted
-            rf"'{re.escape(old_column)}'",  # Single quoted (less common for columns)
+        # Define common SQL aggregation functions
+        agg_functions = [
+            "count",
+            "sum",
+            "avg",
+            "min",
+            "max",
+            "group_concat",
+            "total",
+            "abs",
+            "upper",
+            "lower",
+            "length",
+            "substr",
+            "trim",
+            "round",
+            "cast",
+            "coalesce",
+            "ifnull",
+            "nullif",
         ]
+
+        # Check if the column name is an aggregation function
+        if old_column.lower() in agg_functions:
+            # Skip replacement for aggregation functions
+            continue
+
+        # Special handling for 'order' - don't replace if followed by 'by'
+        if old_column.lower() == "order":
+            # Don't replace 'order' if it's part of 'ORDER BY'
+            # Use a more specific pattern that excludes 'ORDER BY'
+            patterns = [
+                rf"\b{re.escape(old_column)}\b(?!\s*by)(?!\s*\()",  # Not followed by 'by' or '('
+                rf"`{re.escape(old_column)}`(?!\s*by)(?!\s*\()",  # Backtick quoted, not followed by 'by' or '('
+                rf'"{re.escape(old_column)}"(?!\s*by)(?!\s*\()',  # Double quoted, not followed by 'by' or '('
+                rf"'{re.escape(old_column)}'",  # Single quoted (less common for columns)
+            ]
+        else:
+            # Handle both quoted and unquoted column names
+            patterns = [
+                rf"\b{re.escape(old_column)}\b(?!\s*\()",  # Unquoted, not followed by (
+                rf"`{re.escape(old_column)}`(?!\s*\()",  # Backtick quoted, not followed by (
+                rf'"{re.escape(old_column)}"(?!\s*\()',  # Double quoted, not followed by (
+                rf"'{re.escape(old_column)}'",  # Single quoted (less common for columns)
+            ]
 
         replacements = [
             new_column,  # Unquoted replacement
@@ -101,23 +161,241 @@ def replace_sql_names(sql_query, table_mappings, column_mappings):
     return updated_sql
 
 
-def process_sql_queries(input_json_path, output_json_path, csv_path, target_db_ids):
+def save_results_to_csv(validated_queries, csv_output_path):
+    """
+    Save validation results to CSV file with original and new SQL columns.
+
+    Args:
+        validated_queries (list): List of validated query data with EX field
+        csv_output_path (str): Path to output CSV file
+    """
+    # Prepare data for CSV
+    csv_data = []
+
+    for query in validated_queries:
+        csv_row = {
+            "question_id": query.get("question_id"),
+            "db_id": query.get("db_id"),
+            "question": query.get("question"),
+            "evidence": query.get("evidence", ""),
+            "original_sql": query.get("original_sql", ""),  # Store original SQL
+            "new_sql": query.get("SQL", ""),  # Store updated SQL
+            "difficulty": query.get("difficulty", ""),
+            "EX": query.get("EX", 0),
+        }
+        csv_data.append(csv_row)
+
+    # Convert to DataFrame and save
+    df = pd.DataFrame(csv_data)
+    df.to_csv(csv_output_path, index=False, encoding="utf-8")
+
+    print(f"Results saved to CSV: {csv_output_path}")
+    return df
+
+
+def validate_sql_with_ex(
+    original_queries,
+    updated_queries,
+    original_db_root,
+    new_db_root,
+    target_db_ids,
+    timeout_seconds=60,
+):
+    """
+    Validate SQL changes using execution comparison between old and new databases.
+
+    Args:
+        original_queries (list): List of original query data
+        updated_queries (list): List of updated query data
+        original_db_root (str): Root path to original databases
+        new_db_root (str): Root path to new databases
+        target_db_ids (list): List of database IDs to validate
+        timeout_seconds (int): Timeout for each query evaluation
+
+    Returns:
+        list: Updated queries with EX field and original_sql field added
+    """
+    print("Starting EX metric validation...")
+
+    validation_stats = {
+        "total_queries": 0,
+        "successful_queries": 0,
+        "failed_queries": 0,
+        "timeout_queries": 0,
+        "error_queries": 0,
+        "db_results": {},
+    }
+
+    # Create mapping of original queries by question_id for quick lookup
+    original_query_map = {q["question_id"]: q for q in original_queries}
+    validated_queries = []
+
+    for updated_query in tqdm(updated_queries, desc="Validating queries with EX"):
+        db_id = updated_query.get("db_id")
+        question_id = updated_query.get("question_id")
+
+        # Initialize EX field and store original SQL
+        updated_query_copy = updated_query.copy()
+        updated_query_copy["EX"] = 0
+
+        # Store original SQL for reference
+        if question_id in original_query_map:
+            updated_query_copy["original_sql"] = original_query_map[question_id]["SQL"]
+        else:
+            updated_query_copy["original_sql"] = ""
+
+        # Skip if not in target databases
+        if db_id not in target_db_ids:
+            validated_queries.append(updated_query_copy)
+            continue
+
+        validation_stats["total_queries"] += 1
+
+        # Initialize db results if not exists
+        if db_id not in validation_stats["db_results"]:
+            validation_stats["db_results"][db_id] = {
+                "total": 0,
+                "successful": 0,
+                "failed": 0,
+                "timeout": 0,
+                "errors": 0,
+            }
+
+        validation_stats["db_results"][db_id]["total"] += 1
+
+        # Get original query
+        if question_id not in original_query_map:
+            print(f"Warning: Original query not found for question_id {question_id}")
+            validated_queries.append(updated_query_copy)
+            continue
+
+        original_query = original_query_map[question_id]
+
+        try:
+            with timeout(timeout_seconds):
+                gt_db_handler = DatabaseHandler(
+                    dbms=DBMS.SQLITE,
+                    connection_params={
+                        "dbms": DBMS.SQLITE,
+                        "db_path": f"{original_db_root}/{db_id}/{db_id}.sqlite",
+                    },
+                )
+
+                new_db_handler = DatabaseHandler(
+                    dbms=DBMS.SQLITE,
+                    connection_params={
+                        "dbms": DBMS.SQLITE,
+                        "db_path": f"{new_db_root}/{db_id}/{db_id}.sqlite",
+                    },
+                )
+
+                # Run original query on original database
+                gt_cols, gt_rows = gt_db_handler.run_query(original_query["SQL"])
+
+                # Run updated query on new database
+                pred_cols, pred_rows = new_db_handler.run_query(updated_query["SQL"])
+
+                # Calculate EX metric
+                ex = 1 if set(gt_rows) == set(pred_rows) else 0
+                updated_query_copy["EX"] = ex
+
+                if ex == 1:
+                    validation_stats["successful_queries"] += 1
+                    validation_stats["db_results"][db_id]["successful"] += 1
+                else:
+                    validation_stats["failed_queries"] += 1
+                    validation_stats["db_results"][db_id]["failed"] += 1
+
+        except TimeoutError:
+            validation_stats["timeout_queries"] += 1
+            validation_stats["db_results"][db_id]["timeout"] += 1
+            updated_query_copy["EX"] = 0
+            print(f"Timeout for query {question_id} in {db_id}")
+
+        except Exception as e:
+            validation_stats["error_queries"] += 1
+            validation_stats["db_results"][db_id]["errors"] += 1
+            updated_query_copy["EX"] = 0
+            print(f"Error evaluating query {question_id} in {db_id}: {str(e)}")
+
+        validated_queries.append(updated_query_copy)
+
+    return validated_queries, validation_stats
+
+
+def print_ex_validation_summary(validation_stats):
+    """
+    Print comprehensive summary of EX validation results.
+
+    Args:
+        validation_stats (dict): Results from validate_sql_with_ex
+    """
+    print(f"\n{'='*70}")
+    print("EX METRIC VALIDATION SUMMARY")
+    print(f"{'='*70}")
+
+    total = validation_stats["total_queries"]
+    successful = validation_stats["successful_queries"]
+    failed = validation_stats["failed_queries"]
+    timeout = validation_stats["timeout_queries"]
+    errors = validation_stats["error_queries"]
+
+    success_rate = (successful / total * 100) if total > 0 else 0
+
+    print("📊 Overall Statistics:")
+    print(f"  • Total queries validated: {total}")
+    print(f"  • Successful (EX=1): {successful} ({success_rate:.1f}%)")
+    print(f"  • Failed (EX=0): {failed}")
+    print(f"  • Timeout errors: {timeout}")
+    print(f"  • Other errors: {errors}")
+
+    print("\n📋 Per-Database Results:")
+    for db_id, db_stats in validation_stats["db_results"].items():
+        if db_stats["total"] > 0:
+            db_success_rate = db_stats["successful"] / db_stats["total"] * 100
+
+            print(f"  • {db_id}:")
+            print(f"    - Total: {db_stats['total']}")
+            print(
+                f"    - Success (EX=1): {db_stats['successful']} ({db_success_rate:.1f}%)"
+            )
+            print(f"    - Failed (EX=0): {db_stats['failed']}")
+            print(
+                f"    - Timeouts: {db_stats['timeout']}, Errors: {db_stats['errors']}"
+            )
+
+    print("\n🎯 Final Assessment:")
+    if success_rate >= 90:
+        print(f"🎉 EXCELLENT: {success_rate:.1f}% perfect matches (EX=1)!")
+    elif success_rate >= 70:
+        print(f"✅ GOOD: {success_rate:.1f}% perfect matches (EX=1)")
+    elif success_rate >= 50:
+        print(f"⚠️  MODERATE: {success_rate:.1f}% perfect matches (EX=1)")
+    else:
+        print(f"❌ POOR: Only {success_rate:.1f}% perfect matches (EX=1)")
+
+    print(f"{'='*70}")
+
+
+def process_sql_queries(
+    queries_json_path, output_json_path, mapping_csv_path, target_db_ids
+):
     """
     Process SQL queries and update table/column names based on mappings.
 
     Args:
-        input_json_path (str): Path to input JSON file with queries
+        queries_json_path (str): Path to input JSON file with queries
         output_json_path (str): Path to output JSON file
-        csv_path (str): Path to CSV file with name mappings
+        mapping_csv_path (str): Path to CSV file with name mappings
         target_db_ids (list): List of database IDs to process
     """
     # Read name mappings
     print("Reading name mappings...")
-    db_mappings = read_name_mapping(csv_path)
+    db_mappings = read_name_mapping(mapping_csv_path)
 
     # Read input JSON file
-    print(f"Loading queries from {input_json_path}...")
-    with open(input_json_path, "r", encoding="utf-8") as f:
+    print(f"Loading queries from {queries_json_path}...")
+    with open(queries_json_path, "r", encoding="utf-8") as f:
         queries = json.load(f)
 
     # Track statistics
@@ -248,9 +526,14 @@ def print_summary(stats):
 
 if __name__ == "__main__":
     # Configuration
-    input_json_path = "data/benchmarks/Bird/bird_dev.json"
-    output_json_path = "data/benchmarks/Bird/new_bird_dev.json"
-    csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
+    queries_json_path = "data/benchmarks/Bird/minidev/MINIDEV/mini_dev_sqlite.json"
+    mapping_csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
+    results_csv_path = "data/augmentation/snail/new_sql_queries.csv"
+
+    # EX validation configuration
+    original_db_root = "data/benchmarks/Bird/minidev/MINIDEV/dev_databases"
+    new_db_root = "data/augmentation/snail/new_dev_databases"
+    timeout_seconds = 30  # Timeout for each query evaluation
 
     # List of database IDs to process
     target_db_ids = [
@@ -268,18 +551,64 @@ if __name__ == "__main__":
     ]
 
     print("Processing SQL queries...")
-    print(f"Input JSON: {input_json_path}")
-    print(f"Output JSON: {output_json_path}")
-    print(f"Mappings CSV: {csv_path}")
+    print(f"Input JSON: {queries_json_path}")
+    print(f"Output CSV: {results_csv_path}")
+    print(f"Mappings CSV: {mapping_csv_path}")
     print(f"Target databases: {len(target_db_ids)} databases")
     print()
 
     # Process the queries
+    temp_json_path = "temp_updated_queries.json"
     stats = process_sql_queries(
-        input_json_path, output_json_path, csv_path, target_db_ids
+        queries_json_path, temp_json_path, mapping_csv_path, target_db_ids
     )
 
     # Print comprehensive summary
     print_summary(stats)
 
-    print(f"\n📁 Updated queries saved to: {output_json_path}")
+    # Run EX validation
+    print(f"\n{'='*60}")
+    print("STARTING EX METRIC VALIDATION")
+    print(f"{'='*60}")
+    print(f"Original DB root: {original_db_root}")
+    print(f"New DB root: {new_db_root}")
+    print(f"Timeout per query: {timeout_seconds}s")
+    print()
+
+    # Load original and updated queries
+    with open(queries_json_path, "r", encoding="utf-8") as f:
+        original_queries = json.load(f)
+
+    with open(temp_json_path, "r", encoding="utf-8") as f:
+        updated_queries = json.load(f)
+
+    # Run validation and get queries with EX field
+    validated_queries, validation_stats = validate_sql_with_ex(
+        original_queries,
+        updated_queries,
+        original_db_root,
+        new_db_root,
+        target_db_ids,
+        timeout_seconds,
+    )
+
+    # Save results to CSV
+    results_df = save_results_to_csv(validated_queries, results_csv_path)
+
+    # Print validation results
+    print_ex_validation_summary(validation_stats)
+
+    # Print summary statistics
+    successful_count = len(results_df[results_df["EX"] == 1])
+    failed_count = len(results_df[results_df["EX"] == 0])
+
+    print(f"\n📁 All results saved to CSV: {results_csv_path}")
+    print(f"📊 Total queries: {len(results_df)}")
+    print(f"📊 Successful queries (EX=1): {successful_count}")
+    print(f"📊 Failed queries (EX=0): {failed_count}")
+
+    # Clean up temporary file
+    import os
+
+    if os.path.exists(temp_json_path):
+        os.remove(temp_json_path)
