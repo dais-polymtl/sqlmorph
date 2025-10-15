@@ -54,7 +54,7 @@ source scripts/augmentation_config.sh
 Run the main augmentation script:
 
 ```bash
-python -m src.augmentation.jq_graph_augmentation.main <db_id> <num_tables>
+python -m src.augmentation.join_query_expansion.main <db_id> <num_tables>
 ```
 
 * **`db_id`**: Select one of BIRD’s dev databases:
@@ -72,13 +72,13 @@ python -m src.augmentation.jq_graph_augmentation.main <db_id> <num_tables>
 **Example:**
 
 ```bash
-python -m src.augmentation.jq_graph_augmentation.main european_football_2 4
+python -m src.augmentation.join_query_expansion.main european_football_2 4
 ```
 
 * **Optional:** Add `-gf` to generate queries based on graph statistics:
 
 ```bash
-python -m src.augmentation.jq_graph_augmentation.main european_football_2 4 -gf
+python -m src.augmentation.join_query_expansion.main european_football_2 4 -gf
 ```
 
 #### Output

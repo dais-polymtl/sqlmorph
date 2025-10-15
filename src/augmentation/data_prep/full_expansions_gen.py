@@ -3,14 +3,14 @@ from pathlib import Path
 from typing import List, Tuple
 import json
 
-from src.augmentation.jq_graph_augmentation.sql_query_gen import (
+from src.augmentation.join_query_expansion.sql_query_gen import (
     aug_n_table_sql_queries,
 )
-from src.augmentation.jq_graph_augmentation.nl_query_gen import (
+from src.augmentation.join_query_expansion.nl_query_gen import (
     gen_nl,
 )
 
-from src.augmentation.jq_graph_augmentation.persistence import (
+from src.augmentation.join_query_expansion.persistence import (
     save_graph_first,
     save_query_first,
     update_augmentation_log,
