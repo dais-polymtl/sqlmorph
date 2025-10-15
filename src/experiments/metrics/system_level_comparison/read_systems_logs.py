@@ -176,10 +176,9 @@ def read_din_sql_data(din_sql_dir_path: str) -> pd.DataFrame:
         )
 
     csv_path = os.path.join(din_sql_dir_path, "logs.csv")
-    json_path = os.path.join(din_sql_dir_path, "predict_dev.json")
 
-    if not os.path.exists(csv_path) or not os.path.exists(json_path):
-        print(f"Warning: Required files not found in {din_sql_dir_path}")
+    if not os.path.exists(csv_path):
+        print(f"Warning: logs.csv not found in {din_sql_dir_path}")
         return pd.DataFrame(
             columns=[
                 "system",
@@ -195,29 +194,17 @@ def read_din_sql_data(din_sql_dir_path: str) -> pd.DataFrame:
         # Read CSV file
         csv_data = pd.read_csv(csv_path)
 
-        # Read JSON file
-        with open(json_path, "r", encoding="utf-8") as f:
-            json_data = json.load(f)
-
-        # Process data by matching CSV rows with JSON keys
-        for question_id_str, predicted_full in json_data.items():
-            question_id = int(question_id_str)
-
-            # Check if corresponding row exists in CSV
-            if question_id < len(csv_data):
-                row = csv_data.iloc[question_id]
-
-                # Extract predicted SQL (part before \t----- bird -----)
-                predicted_sql = predicted_full.split("\t----- bird -----")[0]
-                data_row = {
-                    "system": "din-sql",
-                    "db_name": row["db_id"],
-                    "question_id": question_id,
-                    "question": row["question"],
-                    "gold_sql": row["gold_query"],
-                    "predicted_sql": process_predicted_sql(predicted_sql),
-                }
-                data_rows.append(data_row)
+        # Process data from CSV
+        for index, row in csv_data.iterrows():
+            data_row = {
+                "system": "din-sql",
+                "db_name": row["db_id"],
+                "question_id": index,  # Use index as question_id
+                "question": row["question"],
+                "gold_sql": row["gold_query"],
+                "predicted_sql": process_predicted_sql(row["final_query"]),
+            }
+            data_rows.append(data_row)
 
         # Create DataFrame and sort by question_id
         df = pd.DataFrame(data_rows)
