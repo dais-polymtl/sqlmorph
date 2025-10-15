@@ -1,16 +1,17 @@
 import os
+import pickle
 import sys
-from dotenv import load_dotenv
 from pathlib import Path
-import numpy as np
-from tabulate import tabulate
 
+import numpy as np
+from dotenv import load_dotenv
+from tabulate import tabulate
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from src.core.logger.logger import Logger
 
 
-from rule_3 import (
+from textual_query_augmentation import (
     retrieve_jqgs,
     compute_node_distribution_per_db,
     cluster_db_ids_by_node_dist,
