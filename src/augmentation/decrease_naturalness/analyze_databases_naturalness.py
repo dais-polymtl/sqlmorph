@@ -112,7 +112,7 @@ def create_visualizations(df, output_dir):
     unique_tables = df.drop_duplicates(subset=["dataset", "db_id", "table_name"])
 
     # Get dataset name for titles
-    dataset_name = df["dataset"].iloc[0] if len(df) > 0 else "Unknown"
+    # dataset_name = df["dataset"].iloc[0] if len(df) > 0 else "Unknown"
 
     # 1. Table vs Column Naturalness Distribution
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
@@ -132,7 +132,7 @@ def create_visualizations(df, output_dir):
     wedges1, texts1 = ax1.pie(
         table_counts.values, labels=table_labels, startangle=90, colors=table_colors
     )
-    ax1.set_title("Table Naturalness Distribution")
+    # ax1.set_title("Table Naturalness Distribution")
 
     # Column naturalness
     column_counts = df["column_naturalness"].value_counts()
@@ -149,7 +149,7 @@ def create_visualizations(df, output_dir):
     wedges2, texts2 = ax2.pie(
         column_counts.values, labels=column_labels, startangle=90, colors=column_colors
     )
-    ax2.set_title("Column Naturalness Distribution")
+    # ax2.set_title("Column Naturalness Distribution")
 
     # Create single legend for both pie charts
     all_categories = sorted(set(table_counts.index) | set(column_counts.index))
@@ -183,7 +183,7 @@ def create_visualizations(df, output_dir):
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.2)  # Increased bottom margin for legend
     plt.savefig(
-        f"{output_dir}/naturalness_distribution_pie.png", dpi=300, bbox_inches="tight"
+        f"{output_dir}/naturalness_distribution_pie.pdf", dpi=300, bbox_inches="tight"
     )
     plt.close()
 
@@ -226,32 +226,39 @@ def create_visualizations(df, output_dir):
         hatch="///",
     )
 
-    # Add value labels on bars
-    for bar in bars1:
+    # Add percentage labels on bars
+    total_tables = len(unique_tables)
+    total_columns = len(df)
+
+    for bar, count in zip(bars1, table_data):
         height = bar.get_height()
         if height > 0:
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.5,
-                f"{int(height)}",
-                ha="center",
-                va="bottom",
-            )
+            percentage = (count / total_tables) * 100
+            if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height + 0.5,
+                    f"{percentage:.1f}%",
+                    ha="center",
+                    va="bottom",
+                )
 
-    for bar in bars2:
+    for bar, count in zip(bars2, column_data):
         height = bar.get_height()
         if height > 0:
-            ax.text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height + 0.5,
-                f"{int(height)}",
-                ha="center",
-                va="bottom",
-            )
+            percentage = (count / total_columns) * 100
+            if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height + 0.5,
+                    f"{percentage:.1f}%",
+                    ha="center",
+                    va="bottom",
+                )
 
-    ax.set_xlabel("Naturalness Categories")
-    ax.set_ylabel("Count")
-    ax.set_title(f"Table vs Column Naturalness Distribution of {dataset_name}")
+    ax.set_xlabel("Naturalness Categories", fontsize=14)
+    ax.set_ylabel("Count", fontsize=14)
+    # ax.set_title(f"Table vs Column Naturalness Distribution of {dataset_name}")
     ax.set_xticks(x)
 
     # Create custom tick labels with descriptions
@@ -272,7 +279,7 @@ def create_visualizations(df, output_dir):
 
     plt.tight_layout()
     plt.savefig(
-        f"{output_dir}/naturalness_distribution_bar.png", dpi=300, bbox_inches="tight"
+        f"{output_dir}/naturalness_distribution_bar.pdf", dpi=300, bbox_inches="tight"
     )
     plt.close()
 
@@ -309,33 +316,39 @@ def create_visualizations(df, output_dir):
             values,
             bottom=bottom,
             label=legend_label,
-            alpha=0.8,
+            alpha=0.6,
             color=naturalness_colors.get(cat, "#95a5a6"),
         )
 
-        # Add value labels on each section of the stacked bars
+        # Add percentage labels on each section of the stacked bars
         for i, (bar, value) in enumerate(zip(bars, values)):
             if value > 0:
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2.0,
-                    bottom[i] + value / 2,
-                    f"{int(value)}",
-                    ha="center",
-                    va="center",
-                    fontweight="bold",
-                )
+                # Calculate total items for this database
+                db_data = df[df["db_id"] == db_ids[i]]
+                unique_db_tables = db_data.drop_duplicates(subset=["table_name"])
+                total_items = len(unique_db_tables) + len(db_data)
+                percentage = (value / total_items) * 100
+
+                if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        bottom[i] + value / 2,
+                        f"{percentage:.1f}%",
+                        ha="center",
+                        va="center",
+                    )
 
         bottom = [b + v for b, v in zip(bottom, values)]
 
-    ax.set_xlabel("Database ID")
-    ax.set_ylabel("Table & Column Count")
-    ax.set_title(f"Naturalness Distribution by Database of {dataset_name}")
+    ax.set_xlabel("Database ID", fontsize=14)
+    ax.set_ylabel("Table & Column Count", fontsize=14)
+    # ax.set_title(f"Naturalness Distribution by Database of {dataset_name}")
     ax.legend()
     plt.xticks(rotation=45, ha="right")
 
     plt.tight_layout()
     plt.savefig(
-        f"{output_dir}/naturalness_by_database.png", dpi=300, bbox_inches="tight"
+        f"{output_dir}/naturalness_by_database.pdf", dpi=300, bbox_inches="tight"
     )
     plt.close()
 
@@ -377,8 +390,8 @@ def generate_summary_report(df, output_dir):
 
 if __name__ == "__main__":
     # Configuration
-    csv_path = "data/augmentation/snail/databases_naturalness.csv"
-    output_dir = "data/augmentation/snail/databases_naturalness_analysis"
+    csv_path = "data/augmentation/decrease_naturalness/databases_naturalness.csv"
+    output_dir = "data/augmentation/decrease_naturalness/databases_naturalness_analysis"
 
     df = load_naturalness_data(csv_path)
 
