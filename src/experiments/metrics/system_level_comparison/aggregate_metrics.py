@@ -37,11 +37,11 @@ def compute_average_metrics(
                 exec_latency_values.append(exec_metric["latency"])
 
     if exec_accuracy_values:
-        ex_avg = round((sum(exec_accuracy_values) / len(exec_accuracy_values)) * 100, 2)
+        ex_avg = round((sum(exec_accuracy_values) / len(exec_accuracy_values)) * 100, 1)
     else:
         ex_avg = 0.0
 
-    exec_result = {"EX": ex_avg, "delta": round(100 - ex_avg, 2)}
+    exec_result = {"EX": ex_avg, "delta": round(100 - ex_avg, 1)}
     if exec_latency_values:
         exec_result["latency_avg"] = round(
             sum(exec_latency_values) / len(exec_latency_values), 4
@@ -77,24 +77,24 @@ def compute_average_metrics(
                 if "latency" in metric:
                     latency_values.append(metric["latency"])
 
-        # Calculate averages with percentages (2 decimal points) and delta metrics
+        # Calculate averages with percentages (1 decimal point) and delta metrics
         agg_metrics = {}
         if ex_values:
-            ex_avg = round((sum(ex_values) / len(ex_values)) * 100, 2)
+            ex_avg = round((sum(ex_values) / len(ex_values)) * 100, 1)
             agg_metrics["EX"] = ex_avg
-            agg_metrics["EX_delta"] = round(100 - ex_avg, 2)
+            agg_metrics["EX_delta"] = round(100 - ex_avg, 1)
         if exp_values:
-            exp_avg = round((sum(exp_values) / len(exp_values)) * 100, 2)
+            exp_avg = round((sum(exp_values) / len(exp_values)) * 100, 1)
             agg_metrics["EXP"] = exp_avg
-            agg_metrics["EXP_delta"] = round(100 - exp_avg, 2)
+            agg_metrics["EXP_delta"] = round(100 - exp_avg, 1)
         if exr_values:
-            exr_avg = round((sum(exr_values) / len(exr_values)) * 100, 2)
+            exr_avg = round((sum(exr_values) / len(exr_values)) * 100, 1)
             agg_metrics["EXR"] = exr_avg
-            agg_metrics["EXR_delta"] = round(100 - exr_avg, 2)
+            agg_metrics["EXR_delta"] = round(100 - exr_avg, 1)
         if f1_values:
-            f1_avg = round((sum(f1_values) / len(f1_values)) * 100, 2)
+            f1_avg = round((sum(f1_values) / len(f1_values)) * 100, 1)
             agg_metrics["F1"] = f1_avg
-            agg_metrics["F1_delta"] = round(100 - f1_avg, 2)
+            agg_metrics["F1_delta"] = round(100 - f1_avg, 1)
         if latency_values:
             agg_metrics["latency_avg"] = round(
                 sum(latency_values) / len(latency_values), 4
@@ -324,7 +324,10 @@ def create_box_plots(
             # Create box plot
             box_data = [exp_values, exr_values, f1_values]
             box = ax.boxplot(
-                box_data, patch_artist=True, tick_labels=["EXP", "EXR", "F1"]
+                box_data,
+                patch_artist=True,
+                tick_labels=["EXP", "EXR", "F1"],
+                medianprops=dict(color="red", linewidth=3.5),
             )
 
             # Color the boxes
@@ -366,9 +369,132 @@ def create_box_plots(
     plt.close()
 
 
+def create_individual_failure_box_plots(input_path, plots_dir, techniques, plot_tag):
+    """Create box plots for each system's individual failure cases in a single PDF"""
+    print(f"Creating individual failure box plots from {input_path}")
+
+    # Read the data
+    df = pd.read_csv(input_path)
+
+    # Get unique systems (excluding any aggregate rows)
+    all_systems = df["system"].unique()
+    base_systems = [
+        s
+        for s in all_systems
+        if not s.startswith("common_failure_") and "_individual_failures" not in s
+    ]
+
+    # Collect failure data for all systems
+    systems_failure_data = []
+
+    for system in base_systems:
+        # Find question_ids where this system has EX=0
+        system_data = df[df["system"] == system]
+        failure_question_ids = []
+
+        for _, row in system_data.iterrows():
+            exec_metric = parse_metric_dict(row["EXECUTION_ACCURACY"])
+            if exec_metric and "EX" in exec_metric and exec_metric["EX"] == 0:
+                failure_question_ids.append(row["question_id"])
+
+        if failure_question_ids:
+            # Filter data for this system's failures
+            failure_data = df[
+                (df["system"] == system)
+                & (df["question_id"].isin(failure_question_ids))
+            ]
+
+            # Extract metrics for plotting
+            plot_df = extract_metrics_for_plotting(failure_data, techniques)
+
+            if len(plot_df) > 0:
+                systems_failure_data.append(
+                    {
+                        "system": system,
+                        "failure_count": len(failure_question_ids),
+                        "plot_df": plot_df,
+                    }
+                )
+                print(f"Found {len(failure_question_ids)} failure cases for {system}")
+
+    if not systems_failure_data:
+        print("No individual failure data to plot")
+        return
+
+    # Create subplot grid with rows for each system
+    fig, axes = plt.subplots(
+        nrows=len(systems_failure_data),
+        ncols=len(techniques),
+        figsize=(len(techniques) * 3.5, len(systems_failure_data) * 3),
+        squeeze=False,
+    )
+
+    # Define colors for metrics
+    colors = {"EXP": "lightblue", "EXR": "lightgreen", "F1": "salmon"}
+
+    for i, system_data in enumerate(systems_failure_data):
+        system = system_data["system"]
+        plot_df = system_data["plot_df"]
+
+        for j, technique in enumerate(techniques):
+            ax = axes[i, j]
+
+            # Filter data for this technique
+            technique_data = plot_df[plot_df["technique"] == technique]
+
+            # Create empty lists for each metric
+            exp_values = technique_data[technique_data["metric"] == "EXP"][
+                "value"
+            ].tolist()
+            exr_values = technique_data[technique_data["metric"] == "EXR"][
+                "value"
+            ].tolist()
+            f1_values = technique_data[technique_data["metric"] == "F1"][
+                "value"
+            ].tolist()
+
+            # Create box plot
+            box_data = [exp_values, exr_values, f1_values]
+            box = ax.boxplot(
+                box_data,
+                patch_artist=True,
+                tick_labels=["EXP", "EXR", "F1"],
+                medianprops=dict(color="red", linewidth=3.5),
+            )
+
+            # Color the boxes
+            for patch, color in zip(box["boxes"], colors.values()):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+
+            # Set titles and labels
+            if i == 0:  # Only set title for top row
+                technique_name = technique.replace("_", " ").replace("AND", "&")
+                ax.set_title(technique_name, fontsize=9)
+
+            if j == 0:  # Only set y-label for leftmost column
+                ax.set_ylabel(system, fontsize=10, fontweight="bold")
+
+            # Set y-axis limits for percentage scale
+            ax.set_ylim(0, 105)
+            ax.grid(True, axis="y", linestyle="--", alpha=0.7)
+
+    # Create plots directory if it doesn't exist
+    os.makedirs(plots_dir, exist_ok=True)
+
+    # Save plot with single filename
+    output_path = os.path.join(
+        plots_dir, f"individual_failure_metrics_{plot_tag}_box_plot.pdf"
+    )
+
+    plt.savefig(output_path, format="pdf", dpi=300, bbox_inches="tight")
+    print(f"Individual failure box plots saved to: {output_path}")
+    plt.close()
+
+
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    TAG = "without_penalty"  # Options: "with_penalty", "without_penalty"
+    TAG = "with_penalty"  # Options: "with_penalty", "without_penalty"
     INPUT_PATH = f"data/metrics/experiments/system_level_comparison/systems_data_with_metrics-{TAG}.csv"
     OUTPUT_PATH = f"data/metrics/experiments/system_level_comparison/system_metrics_avg_report-{TAG}.csv"
 
@@ -380,7 +506,7 @@ if __name__ == "__main__":
         "EXACT_COLUMN_AND_PARTIAL_CELL",
         "SEMANTIC_COLUMN_AND_EXACT_CELL",
         "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
-        # "NO_COLUMN_AND_PARTIAL_CELL",
+        "NO_COLUMN_AND_PARTIAL_CELL",
         # "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
     ]
 
@@ -392,3 +518,6 @@ if __name__ == "__main__":
 
     # Create and save box plots for common failure cases only
     create_box_plots(INPUT_PATH, PLOTS_DIR, techniques, TAG, common_failures_only=True)
+
+    # Create and save box plots for individual system failures
+    create_individual_failure_box_plots(INPUT_PATH, PLOTS_DIR, techniques, TAG)
