@@ -266,8 +266,8 @@ def combine_all_data(
 
 
 if __name__ == "__main__":
-    ROOT_DIR = "data/augmentation/snail/experiments/"
-    data_mode = "new_nl_original_sql_results"
+    ROOT_DIR = "data/augmentation/jqe/BIRD_org/"
+    data_mode = ""
     chess_directory = ROOT_DIR + "chess/" + data_mode
     din_sql_directory = ROOT_DIR + "din-sql/" + data_mode
     mac_sql_directory = ROOT_DIR + "mac-sql/" + data_mode
@@ -286,5 +286,8 @@ if __name__ == "__main__":
 
     # # Combine all data
     all_data = combine_all_data(chess_directory, mac_sql_directory, din_sql_directory)
-    all_data.to_csv(ROOT_DIR + f"systems_data_{data_mode}.csv", index=False)
+    all_data.to_csv(
+        ROOT_DIR + f"systems_data{"_"+data_mode if data_mode!= "" else ""}.csv",
+        index=False,
+    )
     print("DONE!")

@@ -301,22 +301,27 @@ def sample_dataframe(
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    data_mode = "new_nl_original_sql_results"
+    data_mode = ""
+    penalty = "without_penalty"
 
-    ROOT = "data/augmentation/snail/experiments"
-    input_csv_path = ROOT + f"/systems_data_{data_mode}.csv"
-    output_csv_path = ROOT + f"/{data_mode}.csv"
-    log_dir = ROOT + f"/logs/{data_mode}/"
+    ROOT = "data/augmentation/jqe/BIRD_org/"
+    input_csv_path = (
+        ROOT + f"/systems_data{"_"+data_mode if data_mode!= "" else ""}.csv"
+    )
+    output_csv_path = (
+        ROOT + f"/{"_"+data_mode+"-" if data_mode!= "" else ""}{penalty}.csv"
+    )
+    log_dir = ROOT + f"/logs/{"_"+data_mode+"-" if data_mode!= "" else ""}{penalty}/"
 
     databases_dir = "data/benchmarks/Bird/dev_databases"
-    # databases_dir = "data/augmentation/snail/new_dev_databases"
+    # databases_dir = "data/augmentation/decrease_naturalness/new_dev_databases"
 
     techniques = [
         EvaluationTechnique.EXECUTION_ACCURACY,
         # EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
         # EvaluationTechnique.EXACT_COLUMN_AND_PARTIAL_CELL,
-        # EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
-        # EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_PARTIAL_CELL,
         # EvaluationTechnique.NO_COLUMN_AND_PARTIAL_CELL,
     ]
 
