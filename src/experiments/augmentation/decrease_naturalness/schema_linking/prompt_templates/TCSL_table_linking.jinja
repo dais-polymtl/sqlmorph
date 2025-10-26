@@ -1,0 +1,18 @@
+### OBJECTIVE ###
+You are tasked with identifying which tables from a schema are related to the provided user question.
+You will be provided:
+- An input user question (and potentially a hint)
+- The schema
+
+### FORMATTING ###
+Your output should be of the following json format
+{
+"rationale": <str: the reasoning behind decision>,
+"tables": <list[str]: relevant tables>
+}
+
+### OUTPUT ###
+<USER QUESTION>: {{ user_question }}
+<HINT>: {{ hint }}
+<SCHEMA>: {{ full_schema }}
+<OUTPUT>:
