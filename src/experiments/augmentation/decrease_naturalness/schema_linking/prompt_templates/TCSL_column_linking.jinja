@@ -1,0 +1,18 @@
+### OBJECTIVE ###
+You are tasked with identifying which columns from a schema are related to the provided user question.
+You will be provided:
+- An input user question (and potentially a hint)
+- The schema
+
+### FORMATTING ###
+Your output should be of the following json format
+{
+"rationale": <str: the reasoning behind decision>,
+<str: table name 1>: <list[str]: relevant columns>,
+｝
+
+### OUTPUT ###
+<USER QUESTION>: {{ user_question }}
+<HINT>: {{ hint }}
+<SCHEMA>: {{ filtered_tables_schema }}
+<OUTPUT>:
