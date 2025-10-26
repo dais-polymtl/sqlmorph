@@ -31,16 +31,3 @@ uv run pre-commit install
 
 * [Augmentation](docs/AUGMENTATION.md)
 * [Metrics](docs/METRICS.md)
-
-## Citation
-
-If you use this repository, please cite:
-
-```
-@misc{sqlmorph2025,
-  title     = {SQLMorph: Query Mutation for Robust Text-to-SQL Evaluation},
-  author    = {Your Name},
-  year      = {2025},
-  howpublished = {https://github.com/dais-polymtl/text-to-sql-coverage}
-}
-```
