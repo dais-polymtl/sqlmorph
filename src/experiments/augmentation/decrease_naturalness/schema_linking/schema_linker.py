@@ -577,21 +577,21 @@ class SchemaReader:
 
 
 if __name__ == "__main__":
-    # dev database
-    config = {
-        "dbms": "sqlite",
-        "tables_file_path": "data/benchmarks/Bird/dev_tables.json",
-        "db_dir_path": "data/benchmarks/Bird/dev_databases/",
-    }
-
-    # # new dev database
+    # # dev database
     # config = {
     #     "dbms": "sqlite",
-    #     "tables_file_path": "data/augmentation/decrease_naturalness/new_dev_databases/new_dev_tables.json",
-    #     "db_dir_path": "data/augmentation/decrease_naturalness/new_dev_databases/",
+    #     "tables_file_path": "data/benchmarks/Bird/dev_tables.json",
+    #     "db_dir_path": "data/benchmarks/Bird/dev_databases/",
     # }
 
-    db_id = "formula_1"
+    # new dev database
+    config = {
+        "dbms": "sqlite",
+        "tables_file_path": "data/augmentation/decrease_naturalness/new_dev_databases/new_dev_tables.json",
+        "db_dir_path": "data/augmentation/decrease_naturalness/new_dev_databases/",
+    }
+
+    db_id = "california_schools"
     tables_file_path = config["tables_file_path"]
     dbms = config["dbms"]
     db_dir_path = config["db_dir_path"]
@@ -600,14 +600,14 @@ if __name__ == "__main__":
     evidence = "race number refers to raceId; second qualifying period refers to q2; best lap time refers to MIN(q2);"
     schema_reader = SchemaReader(db_id, tables_file_path, db_dir_path)
 
-    # # Full schema
-    # schema, all_columns = schema_reader.get_full_schema_representation()
-    # print("--------")
-    # print("Full Schema")
-    # print(schema)
-    # print("Columns by table:")
-    # print(all_columns)
-    # print("--------")
+    # Full schema
+    schema, all_columns = schema_reader.get_full_schema_representation()
+    print("--------")
+    print("Full Schema")
+    print(schema)
+    print("Columns by table:")
+    print(all_columns)
+    print("--------")
 
     # TCSL approach
     schema, all_columns = schema_reader.get_TCSL_filtered_schema_representation(
@@ -620,13 +620,13 @@ if __name__ == "__main__":
     print(all_columns)
     print("--------")
 
-    # # SCSL approach
-    # schema, all_columns = schema_reader.get_SCSL_filtered_schema_representation(
-    #     question, evidence, ModelProvider.OPENAI, OpenAIModel.GPT_4O_MINI
-    # )
-    # print("--------")
-    # print("SCSL")
-    # print(schema)
-    # print("Columns by table:")
-    # print(all_columns)
-    # print("--------")
+    # SCSL approach
+    schema, all_columns = schema_reader.get_SCSL_filtered_schema_representation(
+        question, evidence, ModelProvider.OPENAI, OpenAIModel.GPT_4O_MINI
+    )
+    print("--------")
+    print("SCSL")
+    print(schema)
+    print("Columns by table:")
+    print(all_columns)
+    print("--------")

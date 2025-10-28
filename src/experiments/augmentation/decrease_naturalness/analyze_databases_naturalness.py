@@ -98,14 +98,16 @@ def create_visualizations(df, output_dir):
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set style
+    # Set style and font
     plt.style.use("default")
+    plt.rcParams["font.family"] = "Times New Roman"
+    plt.rcParams["font.size"] = 14
 
-    # Define custom colors for naturalness levels
+    # Define custom colors for naturalness levels (better color palette)
     naturalness_colors = {
-        "N1": "#2ecc40",  # Green for Regular (easiest)
-        "N2": "#ff851b",  # Orange for Low (medium)
-        "N3": "#e74c3c",  # Red for Least (hardest)
+        "N1": "#4CAF50",  # Material Green for Regular (easiest)
+        "N2": "#FF9800",  # Material Orange for Low (medium)
+        "N3": "#F44336",  # Material Red for Least (hardest)
     }
 
     # Get unique tables for table statistics
@@ -126,11 +128,19 @@ def create_visualizations(df, output_dir):
     for label in table_counts.index:
         count = table_counts[label]
         percentage = (count / len(unique_tables)) * 100
-        table_labels.append(f"{percentage:.1f}% ({count})")
+        # Only show label if percentage is 5% or greater
+        if percentage >= 8.0:
+            table_labels.append(f"{percentage:.1f}% ({count})")
+        else:
+            table_labels.append("")
         table_colors.append(naturalness_colors.get(label, "#95a5a6"))  # Default gray
 
     wedges1, texts1 = ax1.pie(
-        table_counts.values, labels=table_labels, startangle=90, colors=table_colors
+        table_counts.values,
+        labels=table_labels,
+        startangle=90,
+        colors=table_colors,
+        textprops={"fontsize": 16, "fontfamily": "Times New Roman", "color": "black"},
     )
     # ax1.set_title("Table Naturalness Distribution")
 
@@ -143,11 +153,19 @@ def create_visualizations(df, output_dir):
     for label in column_counts.index:
         count = column_counts[label]
         percentage = (count / len(df)) * 100
-        column_labels.append(f"{percentage:.1f}% ({count})")
+        # Only show label if percentage is 5% or greater
+        if percentage >= 8.0:
+            column_labels.append(f"{percentage:.1f}% ({count})")
+        else:
+            column_labels.append("")
         column_colors.append(naturalness_colors.get(label, "#95a5a6"))  # Default gray
 
     wedges2, texts2 = ax2.pie(
-        column_counts.values, labels=column_labels, startangle=90, colors=column_colors
+        column_counts.values,
+        labels=column_labels,
+        startangle=90,
+        colors=column_colors,
+        textprops={"fontsize": 16, "fontfamily": "Times New Roman", "color": "black"},
     )
     # ax2.set_title("Column Naturalness Distribution")
 
@@ -171,17 +189,27 @@ def create_visualizations(df, output_dir):
 
     legend_handles = [Patch(color=color) for color in legend_colors]
 
-    # Place single legend at the bottom center with more spacing
+    # Place single legend at the bottom center with more spacing and larger size
     fig.legend(
         handles=legend_handles,
         labels=legend_labels,
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.05),
+        bbox_to_anchor=(0.5, -0.08),
         ncol=len(legend_labels),
+        fontsize=20,
+        frameon=True,
+        fancybox=True,
+        shadow=True,
+        prop={"family": "Times New Roman", "size": 20},
+        markerscale=2.0,
+        borderpad=1.2,
+        labelspacing=1.0,
+        handlelength=2.5,
+        handletextpad=1.0,
     )
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.2)  # Increased bottom margin for legend
+    plt.subplots_adjust(bottom=0.25)  # Increased bottom margin for larger legend
     plt.savefig(
         f"{output_dir}/naturalness_distribution_pie.pdf", dpi=300, bbox_inches="tight"
     )
@@ -234,30 +262,36 @@ def create_visualizations(df, output_dir):
         height = bar.get_height()
         if height > 0:
             percentage = (count / total_tables) * 100
-            if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+            if percentage >= 8.0:  # Only show label if percentage is 5% or greater
                 ax.text(
                     bar.get_x() + bar.get_width() / 2.0,
                     height + 0.5,
                     f"{percentage:.1f}%",
                     ha="center",
                     va="bottom",
+                    fontsize=16,
+                    fontfamily="Times New Roman",
+                    color="black",
                 )
 
     for bar, count in zip(bars2, column_data):
         height = bar.get_height()
         if height > 0:
             percentage = (count / total_columns) * 100
-            if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+            if percentage >= 8.0:  # Only show label if percentage is 5% or greater
                 ax.text(
                     bar.get_x() + bar.get_width() / 2.0,
                     height + 0.5,
                     f"{percentage:.1f}%",
                     ha="center",
                     va="bottom",
+                    fontsize=16,
+                    fontfamily="Times New Roman",
+                    color="black",
                 )
 
-    ax.set_xlabel("Naturalness Categories", fontsize=14)
-    ax.set_ylabel("Count", fontsize=14)
+    ax.set_xlabel("Naturalness Categories", fontsize=20, fontfamily="Times New Roman")
+    ax.set_ylabel("Count", fontsize=20, fontfamily="Times New Roman")
     # ax.set_title(f"Table vs Column Naturalness Distribution of {dataset_name}")
     ax.set_xticks(x)
 
@@ -273,8 +307,20 @@ def create_visualizations(df, output_dir):
         else:
             tick_labels.append(cat)
 
-    ax.set_xticklabels(tick_labels)
-    ax.legend()
+    ax.set_xticklabels(tick_labels, fontsize=16)
+    ax.tick_params(axis="y", labelsize=16)
+    ax.legend(
+        fontsize=20,
+        frameon=True,
+        fancybox=True,
+        shadow=True,
+        prop={"family": "Times New Roman", "size": 20},
+        markerscale=1.5,
+        borderpad=1.2,
+        labelspacing=0.8,
+        handlelength=2.5,
+        handletextpad=1.0,
+    )
     ax.grid(axis="y", alpha=0.3)
 
     plt.tight_layout()
@@ -284,7 +330,7 @@ def create_visualizations(df, output_dir):
     plt.close()
 
     # 3. Distribution by database
-    fig, ax = plt.subplots(figsize=(15, 8))
+    fig, ax = plt.subplots(figsize=(16, 9))
 
     # Create stacked bar chart
     db_ids = sorted(df["db_id"].unique())
@@ -316,8 +362,10 @@ def create_visualizations(df, output_dir):
             values,
             bottom=bottom,
             label=legend_label,
-            alpha=0.6,
+            alpha=0.85,
             color=naturalness_colors.get(cat, "#95a5a6"),
+            edgecolor="white",
+            linewidth=0.5,
         )
 
         # Add percentage labels on each section of the stacked bars
@@ -329,22 +377,37 @@ def create_visualizations(df, output_dir):
                 total_items = len(unique_db_tables) + len(db_data)
                 percentage = (value / total_items) * 100
 
-                if percentage >= 2.0:  # Only show label if percentage is 2% or greater
+                if percentage >= 8.0:  # Only show label if percentage is 8% or greater
                     ax.text(
                         bar.get_x() + bar.get_width() / 2.0,
                         bottom[i] + value / 2,
                         f"{percentage:.1f}%",
                         ha="center",
                         va="center",
+                        fontsize=18,
+                        fontfamily="Times New Roman",
+                        color="black",  # Remove bold styling
                     )
 
         bottom = [b + v for b, v in zip(bottom, values)]
 
-    ax.set_xlabel("Database ID", fontsize=14)
-    ax.set_ylabel("Table & Column Count", fontsize=14)
-    # ax.set_title(f"Naturalness Distribution by Database of {dataset_name}")
-    ax.legend()
-    plt.xticks(rotation=45, ha="right")
+    ax.set_xlabel("Database ID", fontsize=22, fontfamily="Times New Roman")
+    ax.set_ylabel("Table & Column Count", fontsize=22, fontfamily="Times New Roman")
+    ax.legend(
+        fontsize=20,
+        frameon=True,
+        fancybox=True,
+        shadow=True,
+        prop={"family": "Times New Roman", "size": 20},
+        loc="upper right",
+        markerscale=1.5,
+        borderpad=1.2,
+        labelspacing=0.8,
+        handlelength=2.5,
+        handletextpad=1.0,
+    )
+    plt.xticks(rotation=45, ha="right", fontsize=18)
+    ax.tick_params(axis="y", labelsize=18)
 
     plt.tight_layout()
     plt.savefig(
