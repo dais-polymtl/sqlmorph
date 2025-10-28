@@ -348,7 +348,7 @@ def evaluate_linking(
 if __name__ == "__main__":
     # Define file paths
     input_csv_path = Path(
-        "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_schema_queries_with_schema_linking_2.csv"
+        "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_schema_queries_with_schema_linking.csv"
     )
     output_csv_path = Path(
         "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_schema_queries_with_schema_linking_evaluated.csv"
