@@ -1,48 +1,3 @@
-# filter_mutants.py
-"""
-Extract ALL cumulative error progression patterns using recursive chain discovery
-
-This script processes mutation testing data to identify and extract ALL valid error
-progression patterns where mutations build cumulatively from one depth to the next:
-
-    depth 1: [e1]
-    depth 2: [e1, e2]
-    depth 3: [e1, e2, e3]
-    depth 4: [e1, e2, e3, e4]
-    ...and so on
-
-Key Features:
-- Automatically detects the maximum depth available in the dataset
-- Uses recursive algorithm to discover ALL possible valid progression chains
-- Finds multiple progression patterns per question when they exist
-- Only includes questions that have mutations at ALL depth levels (1 through max_depth)
-
-Algorithm:
-1. Groups mutations by question_id
-2. For each question with complete depth coverage (1 to max_depth):
-   - Starts with each depth-1 mutation as a potential chain root
-   - Recursively explores all valid extensions at subsequent depths
-   - A valid extension must contain all previous operators plus exactly one new operator
-3. Enriches the data with pattern metadata:
-   - error_pattern: The complete error sequence as a string (e.g., "op1 → op2 → op3")
-   - pattern_position: The position in the pattern (equals depth: 1, 2, 3, etc.)
-
-Output Files:
-- mutants_error_patterns.json: All mutations that form complete valid chains
-- filter_mutants_stats.txt: Comprehensive statistics including:
-  * Total questions with valid patterns
-  * Number of unique error patterns discovered
-  * Average patterns per question
-  * Pattern frequency analysis
-  * Top error patterns with distinct operators
-
-Statistics Provided:
-- Pattern distribution across questions
-- Average number of questions per pattern
-- Most common error patterns (all patterns)
-- Top patterns with completely distinct operators (no shared operators)
-"""
-
 import json
 from pathlib import Path
 
@@ -52,17 +7,16 @@ from collections import defaultdict
 # ────────────────────────────────────────────────────────────────────────
 # Configuration variables
 # ────────────────────────────────────────────────────────────────────────
-ROOT = Path("/Users/mhmalekpour/PycharmProjects/text-to-sql-coverage")
+ROOT = Path("data")
 MUTANTS_JSON = (
-    ROOT / "data/evaluation/experiments/controlled_error_sensitivity/mutants.json"
+    ROOT / "metrics/experiments/controlled_error_sensitivity/mutants_depth3.json"
 )
 OUT_FILE = (
     ROOT
-    / "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
+    / "metrics/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
 )
 STATS_FILE = (
-    ROOT
-    / "data/evaluation/experiments/controlled_error_sensitivity/filter_mutants_stats.txt"
+    ROOT / "metrics/experiments/controlled_error_sensitivity/filter_mutants_stats.txt"
 )
 
 

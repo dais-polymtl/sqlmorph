@@ -1,132 +1,3 @@
-# generate_mutants.py
-"""
-Experiment 1 – Step 1 (controlled, sequential error addition)
-
-Goal
-────
-For each gold SQL in BIRD-dev, apply atomic mutation operators sequentially,
-with errors increasing by one new operator per depth. We systematically try
-all applicable operators at each depth level to ensure comprehensive coverage:
-
-    depth 1 :  1 error
-    depth 2 :  1 + 1 new error (applied to depth 1 result)
-    depth 3 :  1 + 1 new error + 1 more error (applied to depth 2 result)
-→ The goal is to track how adding more errors impacts EX/EXP/EXR.
-
-Algorithm Overview
-──────────────────
-The mutation generation follows a depth-based incremental approach:
-
-1. **Sequential Error Addition**: For each depth level (1, 2, 3), we build upon
-   the previous level by adding exactly one more error. This creates a controlled
-   progression where we can measure the cumulative impact of multiple errors.
-
-   IMPORTANT: Each new operator is applied to the SQL result from the previous
-   depth, not to the original gold SQL. This ensures proper incremental mutation
-   where operators work with the actual state of the SQL after previous mutations.
-
-2. **Exhaustive Operator Selection**: At each depth, we systematically try ALL
-   available operators that:
-   - Can be successfully applied to the current SQL (from previous depth)
-   - Don't conflict with previously applied operators
-   - Actually modify the AST (verified by attempting application)
-   - Produce syntactically valid SQL
-
-3. **Incremental Building**: The mutation process follows this pattern:
-   - Depth 1: Apply operator A to original SQL → SQL₁
-   - Depth 2: Apply operator B to SQL₁ → SQL₂
-   - Depth 3: Apply operator C to SQL₂ → SQL₃
-
-   This ensures that operators like `where_condition_flip` at depth 3 work on
-   the correct SQL state (e.g., after `where_predicate_delete` has already
-   removed predicates at depth 2).
-
-4. **Conflict Avoidance**: Currently, each operator conflicts only with itself
-   to prevent duplicate application. The algorithm detects and avoids selecting
-   operators that would conflict with any previously selected operator.
-
-5. **Validation**: Each mutation sequence is validated to ensure:
-   - All operators can be applied successfully
-   - The final AST differs from the original
-   - The resulting SQL is syntactically valid and parseable
-
-Important Implementation Detail
-───────────────────────────────
-All mutation operators are specifically designed to only target the outer query
-structure and preserve subqueries. This is achieved by directly targeting the
-outermost SELECT statement and its clauses (WHERE, HAVING, etc.) while leaving
-any nested subqueries untouched.
-
-Mutation Operators
-──────────────────
-We implement 16 atomic mutation operators that target different SQL components:
-
-**SELECT Clause Mutations:**
-• `projection_drop` — Removes a random column from SELECT list (requires >1 columns)
-• `add_star_wildcard` — Adds * or alias.* to SELECT list
-• `distinct_toggle` — Removes DISTINCT keyword from SELECT clause
-
-**WHERE Clause Mutations:**
-• `where_predicate_delete` — Removes a random predicate from WHERE clause (requires >1 predicates)
-• `where_condition_flip` — Flips comparison operators in WHERE clauses (=↔!=, >↔<, >=↔<=)
-• `where_strengthen` — Makes WHERE conditions more restrictive (< to <=, > to >=)
-• `where_weaken` — Makes WHERE conditions less restrictive (<= to <, >= to >)
-• `where_remove` — Removes the WHERE clause completely
-
-**HAVING Clause Mutations:**
-• `having_condition_flip` — Flips comparison operators in HAVING clauses (=↔!=, >↔<, >=↔<=)
-• `having_remove` — Removes the HAVING clause completely
-
-**JOIN Mutations:**
-• `join_break` — Removes the ON condition from a JOIN clause
-• `join_type_to_left` — Changes any JOIN to LEFT JOIN (makes joins more inclusive)
-
-**Aggregation Mutations:**
-• `aggregation_swap` — Swaps aggregation functions (AVG↔SUM, MIN↔MAX, COUNT→SUM)
-
-**Result Limiting Mutations:**
-• `limit_increase` — Increases existing LIMIT clause (makes it less restrictive)
-• `limit_decrease` — Decreases existing LIMIT clause (makes it more restrictive)
-
-Operator Conflicts
-──────────────────
-In the current implementation, each operator conflicts only with itself to prevent
-duplicate application within the same mutation sequence. This ensures that each
-operator type is applied at most once per sequence, maintaining meaningful and
-distinct mutations.
-
-Correctness safeguards
-──────────────────────
-1.  **Each operator returns a boolean**
-    • True  → it modified the AST.
-    • False → it could not apply and the sequence is abandoned.
-
-2.  **Final structural equality check**
-    Even if every operator claims "changed", a later operator might UNDO
-    the change. We compare the fully-mutated AST with the original AST.
-    If they are structurally identical, the sequence is discarded.
-
-3.  **Conflict detection**
-    Each operator conflicts with itself to prevent duplicate application.
-    The has_conflict() function checks if a new operator would conflict
-    with any previously selected operators.
-
-4.  **SQL Rendering & Validation**
-    All SQL is rendered with `dialect="sqlite"` to ensure consistent
-    output formatting. Generated SQL is validated for parseability to
-    prevent malformed queries from being included in the mutation suite.
-
-5.  **Incremental Mutation State**
-    Each depth level builds upon the previous depth's SQL result, ensuring
-    that operators work with the correct intermediate state rather than
-    the original gold SQL.
-
-Output
-──────
-The generated mutants are saved in a JSON file with the following structure:
-    question_id · db_id · depth · operators[] · mutated_sql · error_count · gold_sql
-"""
-
 from __future__ import annotations
 
 import json
@@ -586,7 +457,7 @@ OP_NAMES = tuple(OPERATORS.keys())
 
 # 2.  Define operator conflicts (operators that shouldn't be used together)
 OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
-    "projection_drop": {"projection_drop"},
+    # "projection_drop": {"projection_drop"},
     "add_star_wildcard": {"add_star_wildcard"},
     "where_predicate_delete": {"where_predicate_delete"},
     "where_remove": {"where_remove"},
@@ -602,8 +473,8 @@ OPERATOR_CONFLICTS: Dict[str, Set[str]] = {
     "join_break": {"join_break"},
     "join_type_to_left": {"join_type_to_left"},
     "aggregation_swap": {"aggregation_swap"},
-    "limit_increase": {"limit_increase", "limit_decrease"},
-    "limit_decrease": {"limit_decrease", "limit_increase"},
+    "limit_increase": {"limit_decrease"},
+    "limit_decrease": {"limit_increase"},
     "distinct_toggle": {"distinct_toggle"},
 }
 
@@ -787,8 +658,8 @@ def generate_mutation_suite(
 if __name__ == "__main__":
     BIRD_DEV_JSON = "data/benchmarks/Bird/bird_dev.json"
     OUT_DIR = "data/metrics/experiments/controlled_error_sensitivity"
-    OUT_FILE = OUT_DIR + "/mutants_depth1.json"
-    MAX_DEPTH = 1  # Set this value to the desired max depth
+    OUT_FILE = OUT_DIR + "/mutants_depth2.json"
+    MAX_DEPTH = 2  # Set this value to the desired max depth
     RANDOM_SEED = 42  # Random seed for reproducible results
 
     # Load dataset here instead of globally
