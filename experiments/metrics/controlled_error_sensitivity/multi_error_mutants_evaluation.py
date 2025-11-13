@@ -1,0 +1,673 @@
+from __future__ import annotations
+
+import copy
+import json
+import os
+import random
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import List, Dict, Set, Optional
+
+from func_timeout import func_timeout, FunctionTimedOut
+from tqdm import tqdm
+
+from src.core.database.database_handler import DBMS
+from src.core.model_manager import OpenAIModel
+from src.metrics import Evaluation, EvaluationTechnique
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 1.  Smart sampling and quality filtering functions
+# ──────────────────────────────────────────────────────────────────────────
+def group_mutants_by_question(mutants: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Group mutants by question_id to ensure complete sets are processed together.
+
+    Args:
+        mutants: List of mutant dictionaries
+
+    Returns:
+        Dictionary mapping question_id to list of mutants for that question
+    """
+    groups = defaultdict(list)
+    for mutant in mutants:
+        question_id = mutant["question_id"]
+        groups[question_id].append(mutant)
+
+    return dict(groups)
+
+
+def group_mutants_by_error_pattern(mutants: List[Dict]) -> Dict[str, List[Dict]]:
+    """
+    Group mutants by error_pattern to allow sampling by pattern type.
+
+    Args:
+        mutants: List of mutant dictionaries
+
+    Returns:
+        Dictionary mapping error_pattern to list of mutants with that pattern
+    """
+    groups = defaultdict(list)
+    for mutant in mutants:
+        # Skip mutants without error_pattern
+        if "error_pattern" not in mutant:
+            continue
+        error_pattern = mutant["error_pattern"]
+        groups[error_pattern].append(mutant)
+
+    return dict(groups)
+
+
+def filter_by_specific_patterns(
+    mutants: List[Dict], specific_patterns: List[str] = None
+) -> List[Dict]:
+    """
+    Filter mutants to only include those with specific error patterns.
+
+    Args:
+        mutants: List of mutant dictionaries
+        specific_patterns: List of specific error patterns to include
+
+    Returns:
+        List of mutants filtered by specific error patterns
+    """
+    if not specific_patterns:
+        return mutants
+
+    filtered_mutants = [
+        m for m in mutants if m.get("error_pattern") in specific_patterns
+    ]
+
+    # Count how many mutants we found for each pattern
+    pattern_counts = defaultdict(int)
+    for mutant in filtered_mutants:
+        pattern_counts[mutant.get("error_pattern")] += 1
+
+    print(f"\nFiltered mutants by {len(specific_patterns)} specific patterns:")
+    for pattern in specific_patterns:
+        count = pattern_counts.get(pattern, 0)
+        print(f"  → {pattern}: {count} mutants")
+
+    return filtered_mutants
+
+
+def smart_sample_mutants(
+    mutants: List[Dict],
+    sample_size: Optional[int] = None,
+    specific_patterns: Optional[List[str]] = None,
+) -> List[Dict]:
+    """
+    Apply smart sampling that maintains complete question_id groups and filters by specific patterns.
+
+    Sampling strategy:
+    1. If specific_patterns is set, filter to only include those specific error patterns
+    2. From each pattern group, sample up to sample_size question groups
+    3. This ensures a diverse set of mutants across different error patterns
+
+    Args:
+        mutants: List of all mutants
+        sample_size: Target number of mutants per pattern (None = all)
+        specific_patterns: List of specific patterns to filter by (None = all)
+
+    Returns:
+        List of sampled mutants maintaining complete question groups
+    """
+    if sample_size is None and not specific_patterns:
+        return mutants
+
+    print(f"Original: {len(mutants)} mutants")
+
+    # If specific_patterns is defined, filter to those patterns
+    if specific_patterns:
+        filtered_mutants = filter_by_specific_patterns(mutants, specific_patterns)
+        print(
+            f"Filtered to {len(filtered_mutants)} mutants with {len(specific_patterns)} specific patterns"
+        )
+        mutants = filtered_mutants
+
+    # If we don't need to sample by size, return all filtered mutants
+    if sample_size is None:
+        return mutants
+
+    # Group by error_pattern first, then by question_id
+    pattern_groups = defaultdict(list)
+    for mutant in mutants:
+        pattern = mutant.get("error_pattern", "unknown")
+        pattern_groups[pattern].append(mutant)
+
+    sampled_mutants = []
+
+    # For each pattern group, sample up to sample_size question groups
+    for pattern, pattern_mutants in pattern_groups.items():
+        # Group by question_id
+        question_groups = group_mutants_by_question(pattern_mutants)
+
+        # Calculate how many question groups to sample
+        if len(question_groups) <= sample_size:
+            # If we have fewer question groups than the sample size, take all of them
+            sampled_question_ids = list(question_groups.keys())
+        else:
+            # Otherwise, randomly sample question groups
+            random.seed(42 + hash(pattern))  # Different seed per pattern for diversity
+            sampled_question_ids = random.sample(
+                list(question_groups.keys()), sample_size
+            )
+
+        # Collect all mutants from sampled questions
+        for question_id in sampled_question_ids:
+            sampled_mutants.extend(question_groups[question_id])
+
+        print(
+            f"  → Pattern '{pattern}': {len([m for m in sampled_mutants if m.get('error_pattern') == pattern])} mutants from {len(sampled_question_ids)} questions"
+        )
+
+    print(
+        f"Sampled: {len(sampled_mutants)} mutants across {len(set(m['question_id'] for m in sampled_mutants))} questions"
+    )
+
+    return sampled_mutants
+
+
+def filter_problematic_questions(mutants: List[Dict]) -> List[Dict]:
+    """
+    Remove question groups where any mutant achieves EX=1.
+
+    If a mutant has EX=1 (perfect execution match), it suggests there's a problem
+    with the query (like generating null tables) where adding errors doesn't affect
+    the result. We remove the entire question group in such cases.
+
+    Args:
+        mutants: List of evaluated mutants (must have EX field)
+
+    Returns:
+        Filtered list of mutants with problematic questions removed
+    """
+    # Group by question_id and check for EX=1
+    question_groups = group_mutants_by_question(mutants)
+    problematic_questions = set()
+
+    for question_id, group_mutants in question_groups.items():
+        for mutant in group_mutants:
+            if mutant.get("EX") == 1:
+                problematic_questions.add(question_id)
+                break
+
+    # Filter out problematic question groups
+    filtered_mutants = []
+    for mutant in mutants:
+        if mutant["question_id"] not in problematic_questions:
+            filtered_mutants.append(mutant)
+
+    if problematic_questions:
+        removed_count = len(mutants) - len(filtered_mutants)
+        print(
+            f"  → Quality filter: Removed {len(problematic_questions)} problematic questions "
+            f"({removed_count} mutants) with EX=1"
+        )
+
+        # Show which patterns remain after filtering
+        remaining_patterns = set(
+            m.get("error_pattern") for m in filtered_mutants if m.get("error_pattern")
+        )
+        print(f"  → Remaining patterns: {sorted(remaining_patterns)}")
+
+        print(
+            f"  → Remaining: {len(filtered_mutants)} mutants across "
+            f"{len(set(m['question_id'] for m in filtered_mutants))} questions"
+        )
+
+    return filtered_mutants
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 2.  Worker count management for different technique types
+# ──────────────────────────────────────────────────────────────────────────
+def get_optimal_worker_count(
+    technique: EvaluationTechnique,
+    force_sequential: bool = False,
+    api_heavy_techniques: Set[EvaluationTechnique] = None,
+) -> int:
+    """
+    Determine optimal worker count based on technique type.
+
+    API-heavy techniques (with embedding calls) should use 1 worker to avoid:
+    - Rate limiting from the API provider
+    - Connection timeouts from concurrent requests
+    - API quota exhaustion
+
+    Non-API techniques can safely use multiple workers.
+
+    Args:
+        technique: The evaluation technique to analyze
+        force_sequential: If True, always use 1 worker
+        api_heavy_techniques: Set of techniques that should use 1 worker
+
+    Returns:
+        Optimal number of workers for this technique
+    """
+    if force_sequential:
+        return 1
+
+    if api_heavy_techniques and technique in api_heavy_techniques:
+        return 1  # Sequential processing for API-heavy techniques
+    else:
+        # Non-API techniques can use multiple workers
+        return min(4, max(1, os.cpu_count() // 2))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 3.  Direct evaluation with func_timeout
+# ──────────────────────────────────────────────────────────────────────────
+def _evaluate_with_timeout(
+    cfg: dict, pred_sql: str, gold_sql: str, log_enabled: bool = False
+) -> tuple:
+    """
+    Executes Evaluation.run_evaluation with func_timeout.
+
+    Args:
+        cfg: Evaluation configuration dictionary
+        pred_sql: Mutated SQL to evaluate
+        gold_sql: Ground truth SQL for comparison
+        log_enabled: Whether to enable logging
+
+    Returns:
+        (metrics_dict, latency) on success
+        (None, -1) on error or timeout
+    """
+    start = time.time()
+    try:
+        ctx = Evaluation(cfg).run_evaluation(
+            predicted_sql=pred_sql,
+            ground_truth_sql=gold_sql,
+            log=log_enabled,
+        )
+        latency = ctx.get("latency", time.time() - start)
+        return (ctx["metrics"], latency)
+    except Exception:
+        return (None, -1)
+
+
+def score_one_mutant(
+    mutant: dict,
+    template_cfg: dict,
+    dev_db_root: str,
+    per_query_timeout: int,
+    log_enabled: bool = False,
+) -> dict:
+    """
+    Wrapper executed by the thread pool for each mutant evaluation.
+
+    Process:
+    1. Creates evaluation config with correct database path
+    2. Uses func_timeout for timeout enforcement
+    3. Merges evaluation metrics back into mutant dictionary
+
+    Args:
+        mutant: Mutant dictionary containing SQL and metadata
+        template_cfg: Base evaluation configuration to copy
+        dev_db_root: Path to development databases
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether to enable logging
+
+    Returns:
+        Updated mutant dict with EX/EXP/EXR/F1/latency fields
+    """
+    # Create config with correct database path
+    cfg = copy.deepcopy(template_cfg)
+    db_file = Path(dev_db_root) / mutant["db_id"] / f"{mutant['db_id']}.sqlite"
+    cfg["db_params"]["db_path"] = str(db_file)
+
+    # Use func_timeout for evaluation
+    try:
+        metrics, latency = func_timeout(
+            per_query_timeout,
+            _evaluate_with_timeout,
+            args=(cfg, mutant["mutated_sql"], mutant["gold_sql"], log_enabled),
+        )
+    except FunctionTimedOut:
+        metrics, latency = None, -1
+    except Exception:
+        metrics, latency = None, -1
+
+    # Create a result dictionary with all original fields preserved
+    result = copy.deepcopy(mutant)
+
+    # Merge evaluation results into result dictionary
+    if not metrics:
+        result.update(
+            {"EX": None, "EXP": None, "EXR": None, "F1": None, "latency": latency}
+        )
+    else:
+        result.update(
+            {
+                "EX": metrics.get("EX", 0),
+                "EXP": metrics.get("EXP", 0.0),
+                "EXR": metrics.get("EXR", 0.0),
+                "F1": metrics.get("F1", 0.0),
+                "latency": latency,
+            }
+        )
+    return result
+
+
+def get_technique_name(technique: EvaluationTechnique) -> str:
+    """
+    Convert evaluation technique enum to filename-safe string.
+
+    Args:
+        technique: EvaluationTechnique enum value
+
+    Returns:
+        Lowercase string suitable for filename
+    """
+    return technique.name.lower()
+
+
+def evaluate_with_technique(
+    mutants: List[Dict],
+    technique: EvaluationTechnique,
+    dev_db_root: str,
+    logs_dir: str,
+    embedding_model: OpenAIModel,
+    per_query_timeout: int,
+    log_enabled: bool = False,
+    force_sequential: bool = False,
+    api_heavy_techniques: Set[EvaluationTechnique] = None,
+) -> List[Dict]:
+    """
+    Evaluate all mutants using a specific evaluation technique.
+
+    Uses adaptive worker count: 1 for API-heavy techniques, more for others.
+
+    Args:
+        mutants: List of mutant dictionaries to evaluate
+        technique: Evaluation technique to use
+        dev_db_root: Path to development databases
+        logs_dir: Directory for logs
+        embedding_model: Embedding model for semantic techniques
+        per_query_timeout: Timeout in seconds for evaluation
+        log_enabled: Whether to enable logging
+        force_sequential: Whether to force sequential processing
+        api_heavy_techniques: Set of techniques considered API-heavy
+
+    Returns:
+        List of mutants with evaluation results added (filtered for quality)
+    """
+    technique_name = get_technique_name(technique)
+
+    # Use the single log directory for all techniques
+    log_dir_path = str(logs_dir)
+
+    # Determine optimal worker count for this technique
+    max_workers = get_optimal_worker_count(
+        technique, force_sequential, api_heavy_techniques
+    )
+    is_api_heavy = api_heavy_techniques and technique in api_heavy_techniques
+
+    # Create evaluation configuration template for this technique
+    eval_template = {
+        "evaluation_technique": technique,
+        "db_params": {"dbms": DBMS.SQLITE, "db_path": ""},  # db_path filled per query
+        "embedding_model": embedding_model,
+        "logs_dir_path": log_dir_path,  # Single log directory for all techniques
+    }
+
+    print(f"  → Evaluating {len(mutants):,} mutants with {technique.name}")
+    print(
+        f"  → Workers: {max_workers} {'(sequential for API safety)' if is_api_heavy else '(parallel)'}"
+    )
+    if log_enabled:
+        print(f"  → Logs: {log_dir_path}")
+
+    scored: List[dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        # Submit all evaluation tasks
+        futures = [
+            pool.submit(
+                score_one_mutant,
+                copy.deepcopy(m),
+                eval_template,
+                dev_db_root,
+                per_query_timeout,
+                log_enabled,
+            )
+            for m in mutants
+        ]
+
+        # Collect results with progress tracking
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc=f"  {technique_name}",
+            ncols=80,
+        ):
+            scored.append(future.result())
+
+    # Apply quality filtering after evaluation
+    filtered_scored = filter_problematic_questions(scored)
+
+    return filtered_scored
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 4.  Main evaluation routine
+# ──────────────────────────────────────────────────────────────────────────
+def main(
+    dev_db_root: str,
+    mutants_json: str,
+    out_dir: str,
+    logs_dir: str,
+    evaluation_techniques: List[EvaluationTechnique],
+    embedding_model: OpenAIModel,
+    sample_size: Optional[int],
+    specific_patterns: Optional[List[str]],
+    per_query_timeout: int,
+    log_enabled: bool,
+    force_sequential: bool,
+    api_heavy_techniques: Set[EvaluationTechnique],
+):
+    """
+    Main evaluation pipeline that processes mutants with multiple techniques.
+
+    Process:
+    1. Load mutants from Step 1
+    2. Apply smart sampling (by specific patterns and question groups) and quality filtering
+    3. For each evaluation technique:
+       - Determine optimal worker count (1 for API-heavy, more for others)
+       - Create technique-specific log directory
+       - Run complete evaluation suite with logging
+       - Apply quality filtering (remove questions with EX=1)
+       - Save technique-specific results
+    4. Generate summary statistics
+    """
+    print("=" * 60)
+    print("MUTANT EVALUATION - Multiple Techniques")
+    print("=" * 60)
+
+    # Load mutants from Step 1
+    print(f"Loading mutants from {mutants_json}")
+    with Path(mutants_json).open() as f:
+        all_mutants: List[Dict] = json.load(f)
+
+    print(f"Loaded {len(all_mutants):,} total mutants")
+
+    # Apply smart sampling by specific patterns and question groups
+    sampled_mutants = smart_sample_mutants(all_mutants, sample_size, specific_patterns)
+
+    # Show pattern distribution before evaluation
+    pattern_counts = defaultdict(int)
+    for mutant in sampled_mutants:
+        pattern_counts[mutant.get("error_pattern", "unknown")] += 1
+
+    print("\nPattern distribution in sampled mutants:")
+    for pattern, count in sorted(pattern_counts.items()):
+        print(f"  → {pattern}: {count} mutants")
+
+    # Display configuration
+    print("\nConfiguration:")
+    print(f"  Embedding model: {embedding_model.value}")
+    print(f"  Per-query timeout: {per_query_timeout}s")
+    print(f"  Logging enabled: {log_enabled}")
+    print(f"  Force sequential: {force_sequential}")
+    print(f"  Output directory: {out_dir}")
+    print(f"  Log directory: {logs_dir}")
+    print(f"  Sample size per pattern: {sample_size}")
+    print(f"  Specific patterns: {specific_patterns}")
+
+    # Show worker strategy
+    print("\nWorker Strategy:")
+    for technique in evaluation_techniques:
+        workers = get_optimal_worker_count(
+            technique, force_sequential, api_heavy_techniques
+        )
+        is_api = technique in api_heavy_techniques
+        print(
+            f"  {technique.name}: {workers} worker{'s' if workers > 1 else ''} "
+            f"{'(API-heavy)' if is_api else '(standard)'}"
+        )
+
+    # Evaluate with each technique and save separate results
+    print(f"\nEvaluating with {len(evaluation_techniques)} different techniques:")
+
+    for i, technique in enumerate(evaluation_techniques, 1):
+        technique_name = get_technique_name(technique)
+        print(f"\n[{i}/{len(evaluation_techniques)}] {technique.name}")
+
+        # Run evaluation for this technique (includes quality filtering)
+        scored_mutants = evaluate_with_technique(
+            sampled_mutants,
+            technique,
+            dev_db_root,
+            logs_dir,
+            embedding_model,
+            per_query_timeout,
+            log_enabled,
+            force_sequential,
+            api_heavy_techniques,
+        )
+
+        # Show pattern distribution after evaluation and filtering
+        final_pattern_counts = defaultdict(int)
+        for mutant in scored_mutants:
+            final_pattern_counts[mutant.get("error_pattern", "unknown")] += 1
+
+        print("  → Final pattern distribution:")
+        for pattern, count in sorted(final_pattern_counts.items()):
+            print(f"    • {pattern}: {count} mutants")
+
+        # Save technique-specific results
+        out_file = Path(out_dir) / f"mutant_scores_{technique_name}.json"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with out_file.open("w") as f:
+            json.dump(scored_mutants, f, indent=2)
+
+        # Calculate summary statistics
+        successful_evals = [m for m in scored_mutants if m.get("EX") is not None]
+        failed_evals = len(scored_mutants) - len(successful_evals)
+
+        if successful_evals:
+            avg_ex = sum(m["EX"] for m in successful_evals) / len(successful_evals)
+            avg_f1 = sum(m["F1"] for m in successful_evals) / len(successful_evals)
+            avg_latency = sum(m["latency"] for m in successful_evals) / len(
+                successful_evals
+            )
+
+            # Calculate depth distribution
+            depth_counts = {}
+            for m in successful_evals:
+                depth = m.get("depth", "unknown")
+                depth_counts[depth] = depth_counts.get(depth, 0) + 1
+
+            print(f"  → Results saved to {out_file.name}")
+            print(
+                f"  → Final dataset: {len(scored_mutants)} mutants across "
+                f"{len(set(m['question_id'] for m in scored_mutants))} questions"
+            )
+            print(
+                f"  → Success rate: {len(successful_evals)}/{len(scored_mutants)} "
+                f"({100 * len(successful_evals) / len(scored_mutants):.1f}%)"
+            )
+            if failed_evals > 0:
+                print(f"  → Failed evaluations: {failed_evals}")
+            print(f"  → Depth distribution: {dict(sorted(depth_counts.items()))}")
+            print(f"  → Average EX: {avg_ex:.3f}")
+            print(f"  → Average F1: {avg_f1:.3f}")
+            print(f"  → Average latency: {avg_latency:.2f}s")
+        else:
+            print(f"  → WARNING: All evaluations failed for {technique.name}")
+            print(f"  → Results saved to {out_file.name}")
+
+    print(f"\n{'=' * 60}")
+    print("EVALUATION COMPLETE")
+    print(f"Results saved in: {out_dir}")
+    if log_enabled:
+        print(f"Logs saved in: {logs_dir}")  # Show the single log dir
+    print(f"{'=' * 60}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Entry-point
+# ──────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    experiment_name = "ex-multi"
+    DEV_DB_ROOT = "data/benchmarks/Bird/dev_databases"
+    MUTANTS_JSON = "data/evaluation/experiments/controlled_error_sensitivity/mutants_error_patterns.json"
+    OUT_DIR = f"data/evaluation/experiments/controlled_error_sensitivity/scores/{experiment_name}"
+
+    LOGS_DIR = f"data/evaluation/experiments/controlled_error_sensitivity/logs/{experiment_name}"
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Multiple evaluation techniques to compare mutation impact across different metrics
+    EVALUATION_TECHNIQUES = [
+        EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.EXACT_COLUMN_AND_EXACT_CELL,
+    ]
+
+    # Embedding model configuration for semantic evaluation techniques
+    EMBEDDING_MODEL = OpenAIModel.TEXT_EMBEDDING_3_SMALL
+
+    # Configuration options
+    SAMPLE_SIZE = 30  # None → score all mutants; small int for quick test (applied to question groups)
+
+    # List of specific error patterns to evaluate
+    SPECIFIC_PATTERNS = [
+        ## p-schema
+        "projection_drop → add_star_wildcard → distinct_toggle",
+        ## p-filter
+        "limit_increase → where_predicate_delete → where_remove",
+        ### p-join
+        "projection_drop → join_type_change → join_break",
+        ### p-aggregation
+        "aggregation_swap → having_remove → add_star_wildcard",
+        ### p-size
+        "limit_increase → distinct_toggle → where_predicate_delete",
+    ]
+
+    PER_QUERY_TIMEOUT = 30  # wall-clock seconds per individual query evaluation
+    LOG = True  # Enable/disable detailed evaluation logging per technique
+    FORCE_SEQUENTIAL = True  # Set to True to use 1 worker for all techniques
+
+    # Techniques that use embedding API calls and should use fewer workers
+    API_HEAVY_TECHNIQUES = {
+        EvaluationTechnique.SEMANTIC_COLUMN_AND_EXACT_CELL,
+        EvaluationTechnique.UNIFIED_COLUMN_AND_SEMANTIC_ROW,
+    }
+
+    main(
+        dev_db_root=DEV_DB_ROOT,
+        mutants_json=MUTANTS_JSON,
+        out_dir=OUT_DIR,
+        logs_dir=LOGS_DIR,
+        evaluation_techniques=EVALUATION_TECHNIQUES,
+        embedding_model=EMBEDDING_MODEL,
+        sample_size=SAMPLE_SIZE,
+        specific_patterns=SPECIFIC_PATTERNS,
+        per_query_timeout=PER_QUERY_TIMEOUT,
+        log_enabled=LOG,
+        force_sequential=FORCE_SEQUENTIAL,
+        api_heavy_techniques=API_HEAVY_TECHNIQUES,
+    )
