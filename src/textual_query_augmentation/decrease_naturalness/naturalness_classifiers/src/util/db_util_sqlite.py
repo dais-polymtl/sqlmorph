@@ -26,7 +26,7 @@ def do_query(
     conn = connect_to_db(database_name=database_name, db_list_file=db_list_file)
     cursor = conn.cursor()
     cursor.execute(query)
-    if cursor.description == None:
+    if cursor.description is None:
         return pd.DataFrame()
     columns = [column[0] for column in cursor.description]
     # make sure column names are unique
@@ -64,7 +64,7 @@ def connect_to_db(
         if entry["database"] == database_name:
             db_info = entry
             break
-    if db_info == None:
+    if db_info is None:
         raise FileNotFoundError
 
     conn = sqlite3.connect(db_info["path"])
@@ -79,7 +79,7 @@ def get_tables_and_columns_from_sqlite_db(
     schema="",
     db_list_file=".local/spider_dbinfo.json",
 ):
-    conn = connect_to_db(db_name, db_list_file=db_list_file)
+    # conn = connect_to_db(db_name, db_list_file=db_list_file)
     tables = do_query(
         "select tbl_name from sqlite_master where type='table'",
         database_name=db_name,

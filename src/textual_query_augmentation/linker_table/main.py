@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from src.core.logger.logger import Logger
 
 
-from textual_query_augmentation import (
+from src.augmentation.textual_query_augmentation.linker_table import (
     retrieve_jqgs,
     compute_node_distribution_per_db,
     cluster_db_ids_by_node_dist,
@@ -29,7 +29,7 @@ logger = Logger(__name__)
 load_dotenv()
 
 
-def run_rule_3():
+def run_linker_table():
     print("Starting Rule 3: Hiding Path Information")
 
     data_folder = Path(os.getenv("DATA_FOLDER"))
@@ -265,4 +265,4 @@ def run_rule_3():
 
 
 if __name__ == "__main__":
-    run_rule_3()
+    run_linker_table()

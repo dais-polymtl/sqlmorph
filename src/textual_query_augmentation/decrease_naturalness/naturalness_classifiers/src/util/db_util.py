@@ -49,7 +49,7 @@ def do_query(
     cursor.execute(query_string)
     if debug:
         print("DB UTIL.DO_QUERY: Executing query FINISHED")
-    if cursor.description == None:
+    if cursor.description is None:
         return pd.DataFrame()
     columns = [column[0] for column in cursor.description]
 
@@ -151,7 +151,7 @@ def get_tables_and_columns_from_sql_server_db(
     schema : schema name, defaults to dbo. Modify to query natural views
     """
 
-    if table_list != None:
+    if table_list is not None:
         table_list = [t.upper() for t in table_list]
 
     conn = connect_to_db(db_name)
@@ -166,7 +166,7 @@ def get_tables_and_columns_from_sql_server_db(
             table_name = row[0].upper()
         else:
             table_name = row[0]
-        if table_list == None or table_name in table_list:
+        if table_list is None or table_name in table_list:
             tables_and_columns[table_name] = []
 
     for table in tables_and_columns:
@@ -238,9 +238,9 @@ def make_db_schema_prompt(
     prompt : str
         The prompt to be used for the LLM query.
     """
-    if table_list != None:
+    if table_list is None:
         table_list = [t.upper() for t in table_list]
-    if column_list != None:
+    if column_list is None:
         column_list = [c.upper() for c in column_list]
 
     tables_and_columns = table_col_function(

@@ -1,20 +1,6 @@
-# Text-to-SQL Coverage
+# Join Query Expansion (JQE)
 
-This repository contains tools for **expanding and augmenting SQL queries** to enhance Text-to-SQL evaluation. We provide two main augmentation strategies:
-
-* **Join Query Expansion (JQE):** Increases SQL complexity by adding diverse, valid joins.
-* **Textual Query Augmentation (TQA):** Modifies natural language queries to test handling of linker tables.
-
-These methods create **targeted challenges** that reveal weaknesses in SQL generation systems. Experiments show that JQE substantially lowers execution accuracy, while TQA exposes subtle natural language vulnerabilities.
-
----
-
-## Table of Contents
-
-1. [Setup](#setup)
-2. [Usage](#usage)
-3. [Experiments](#experiments)
-4. [Results](#results)
+Increases SQL complexity by adding diverse, valid joins.
 
 ---
 
@@ -42,7 +28,7 @@ root/data/
 Before running the scripts, source the configuration file:
 
 ```bash
-source scripts/augmentation_config.sh
+source scripts/jqe_config.sh
 ```
 
 ---
@@ -54,7 +40,7 @@ source scripts/augmentation_config.sh
 Run the main augmentation script:
 
 ```bash
-python -m src.augmentation.join_query_expansion.main <db_id> <num_tables>
+python -m src/join_query_expansion/main.py <db_id> <num_tables>
 ```
 
 * **`db_id`**: Select one of BIRD’s dev databases:
@@ -72,13 +58,13 @@ python -m src.augmentation.join_query_expansion.main <db_id> <num_tables>
 **Example:**
 
 ```bash
-python -m src.augmentation.join_query_expansion.main european_football_2 4
+python -m src/join_query_expansion/main.py european_football_2 4
 ```
 
 * **Optional:** Add `-gf` to generate queries based on graph statistics:
 
 ```bash
-python -m src.augmentation.join_query_expansion.main european_football_2 4 -gf
+python -m src/join_query_expansion/main.py european_football_2 4 -gf
 ```
 
 #### Output
@@ -108,40 +94,9 @@ The script produces several JSON and SQL files under `data/rule_outputs/jq_augme
 
 ---
 
-### 2. Textual Query Augmentation (TQA)
-
-The script splits the data into train, dev, and test sets using K-Means clustering over databases with respect to node distribution.  
-
-Run the script:
-
-```bash
-python src/augmentation/main.py
-```
-
-#### Output
-
-The script saves JSON and SQL files under `data/lt_elimination/split/`, where `split` is one of `train`, `dev`, or `test`.  
-
-Each split contains files named as follows:
-
-```
-split_<technique>_queries.json
-split_<technique>_queries.sql
-```
-
-where `<technique>` can be:
-* `syn_rep` → Synonym Replacement  
-* `backtrans` → Backtranslation  
-* `context_aug` → Contextual Augmentation  
-
-
----
-
 ## Experiments
 
-### JQE
-
-#### Experiments 1 & 2: Connectivity and Cyclicity
+### Experiments 1 & 2: Connectivity and Cyclicity
 
 The full set of expansion queries is stored in:
 
@@ -152,7 +107,7 @@ data/rule_outputs/jq_augmentation/aug_log/augmentation_log.pickle
 To compute the connectivity and cyclicity values for the expansion set (derived from BIRD’s dev set), run the following command:
 
 ```bash
-python src/experiments/augmentation/join_stats.py
+python experiments/join_query_expansion/join_stats.py
 ```
 
 This will generate two CSV files under `experiments/augmentation/`:
@@ -160,7 +115,7 @@ This will generate two CSV files under `experiments/augmentation/`:
 * `augmented_join_details.csv` — details for the augmented queries, including the average degree for each query and a boolean indicating whether the query contains cycles.
 * `original_join_details.csv` — details for the original queries, including the average degree for each query and a boolean indicating whether the query contains cycles.
 
-#### Experiment 3: Systems Performance - Unique Expansions
+### Experiment 3: Systems Performance - Unique Expansions
 
 Three SOTA systems were evaluated on the 58 unique expansion queries derived from the BIRD dev set: CHESS, DIN-SQL, and MAC-SQL. Their outputs for this experiment are stored under:
 
@@ -173,7 +128,7 @@ where `system` is one of `CHESS`, `DIN-SQL`, or `MAC-SQL`.
 To calculate the scores of the systems on the original pre-expansion queries, the unique expansions, and the variation of Exact Match (Delta EX = EX_exp - EX_ori), run:
 
 ```bash
-python src/experiments/augmentation/delta_ex.py
+python experiments/join_query_expansion/delta_ex.py
 ```
 
 This produces two types of CSV files under `data/experiments/augmentation/`:
@@ -186,7 +141,7 @@ This produces two types of CSV files under `data/experiments/augmentation/`:
 2. **`system_delta_ex_results.csv`**  
    * Contains the Delta EX values for each unique expansion query.
 
-#### Experiment 3: Systems Performance - Sampled Expansions
+### Experiment 3: Systems Performance - Sampled Expansions
 
 The same three SOTA systems—`CHESS`, `DIN-SQL`, and `MAC-SQL`—were evaluated on the 408 sampled queries from the full expansion set. Their outputs for this experiment are stored under:
 
@@ -199,7 +154,7 @@ where `system` is one of `CHESS`, `DIN-SQL`, or `MAC-SQL`.
 To generate the results in the file `data/experiments/join_sampling_results.csv`, run:
 
 ```bash
-python src/experiments/augmentation/join_sampling_results.py
+python experiments/join_query_expansion/join_sampling_results.py
 ````
 
 ---

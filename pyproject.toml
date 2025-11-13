@@ -1,7 +1,7 @@
 [project]
-name = "text-to-sql-coverage"
+name = "sqlmorph"
 version = "0.1.0"
-description = "Add your description here"
+description = "SQLMorph: Query Mutation and Fine-Grained Metrics for Text-to-SQL Evaluation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

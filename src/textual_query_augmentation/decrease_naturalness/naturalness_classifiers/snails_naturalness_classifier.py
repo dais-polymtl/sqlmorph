@@ -82,7 +82,7 @@ class CanineIdentifierClassifier:
 
         auto_scores = []
 
-        if ident_df == None:
+        if ident_df is None:
             ident_df = self.identifiers
 
         for row in ident_df.itertuples():
