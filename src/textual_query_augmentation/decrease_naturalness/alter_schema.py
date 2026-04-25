@@ -150,13 +150,14 @@ def alter_column_name(conn, table_name, old_column, new_column):
         return False
 
 
-def alter_database_schema(db_path, mappings):
+def alter_database_schema(db_path, mappings, db_id):
     """
     Alter the schema of a database using the provided mappings.
 
     Args:
         db_path (str): Path to the database file
         mappings (dict): Name mappings for tables and columns
+        db_id (str): Database identifier for logging
     """
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = OFF")  # Disable foreign keys during alteration
@@ -165,31 +166,62 @@ def alter_database_schema(db_path, mappings):
         table_mappings = mappings.get("table_mappings", {})
         column_mappings = mappings.get("column_mappings", {})
 
-        # First, rename all columns (before renaming tables)
+        # Get list of existing tables
         cursor = conn.cursor()
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
-        tables = [row[0] for row in cursor.fetchall()]
+        existing_tables = [row[0] for row in cursor.fetchall()]
 
-        for table_name in tables:
+        print(f"\n--- Processing database: {db_id} ---")
+
+        # Check for tables that won't be renamed (not in database)
+        for old_table_name in table_mappings.keys():
+            if old_table_name not in existing_tables:
+                print(
+                    f"⚠️  SKIP: Table '{old_table_name}' not found in database {db_id}"
+                )
+
+        # First, rename all columns (before renaming tables)
+        for table_name in existing_tables:
             # Check if this table will be renamed
             final_table_name = table_mappings.get(table_name, table_name)
+
+            # Get existing columns for this table
+            cursor.execute(f"PRAGMA table_info(`{table_name}`)")
+            existing_columns = [col[1] for col in cursor.fetchall()]
 
             # Rename columns for this table
             for (mapped_table, old_column), new_column in column_mappings.items():
                 if mapped_table == final_table_name:  # Use the final table name
-                    alter_column_name(conn, table_name, old_column, new_column)
+                    if old_column not in existing_columns:
+                        print(
+                            f"⚠️  SKIP: Column '{old_column}' not found in table {db_id}/{table_name}"
+                        )
+                    else:
+                        success = alter_column_name(
+                            conn, table_name, old_column, new_column
+                        )
+                        if not success:
+                            print(
+                                f"❌ FAILED: Could not rename column {db_id}/{table_name}/{old_column} -> {new_column}"
+                            )
 
         # Then rename tables
         for old_table_name, new_table_name in table_mappings.items():
-            alter_table_name(conn, old_table_name, new_table_name)
+            if old_table_name in existing_tables:
+                success = alter_table_name(conn, old_table_name, new_table_name)
+                if not success:
+                    print(
+                        f"❌ FAILED: Could not rename table {db_id}/{old_table_name} -> {new_table_name}"
+                    )
+            # else: already logged above
 
         conn.commit()
-        print(f"Successfully altered database schema: {db_path}")
+        print(f"✅ Completed schema alteration for database: {db_id}")
 
     except Exception as e:
-        print(f"Error altering database {db_path}: {str(e)}")
+        print(f"❌ ERROR: Exception while altering database {db_id}: {str(e)}")
         conn.rollback()
 
     finally:
@@ -218,19 +250,26 @@ def process_databases(db_ids, input_root, output_root, csv_path):
     db_mappings = read_name_mapping(csv_path)
 
     # Step 3: Alter schemas for databases that have mappings
-    print("Altering database schemas...")
+    print("\n" + "=" * 60)
+    print("ALTERING DATABASE SCHEMAS")
+    print("=" * 60)
 
-    for db_id in tqdm(db_ids, desc="Altering schemas"):
+    for db_id in db_ids:
         db_path = os.path.join(output_root, db_id, f"{db_id}.sqlite")
 
         if os.path.exists(db_path):
             if db_id in db_mappings:
-                print(f"Altering schema for {db_id}...")
-                alter_database_schema(db_path, db_mappings[db_id])
+                alter_database_schema(db_path, db_mappings[db_id], db_id)
             else:
-                print(f"No mappings found for {db_id}, keeping original schema")
+                print(
+                    f"\nℹ️  INFO: No mappings found for {db_id}, keeping original schema"
+                )
         else:
-            print(f"Warning: Database file not found: {db_path}")
+            print(f"\n❌ ERROR: Database file not found: {db_path}")
+
+    print("\n" + "=" * 60)
+    print("SCHEMA ALTERATION COMPLETED")
+    print("=" * 60)
 
 
 def validate_changes(db_ids, output_root, db_mappings):
@@ -340,8 +379,8 @@ def validate_changes(db_ids, output_root, db_mappings):
 if __name__ == "__main__":
     # Configuration
     input_root = "data/benchmarks/Bird/dev_databases"
-    output_root = "data/augmentation/snail/new_dev_databases"
-    csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
+    output_root = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/new_dev_databases"
+    csv_path = "data/augmentation/decrease_naturalness/databases_naturalness_decreased_fixed.csv"
 
     # List of database IDs to process
     db_ids = [

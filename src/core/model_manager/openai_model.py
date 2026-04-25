@@ -13,6 +13,7 @@ logger = Logger(__name__)
 
 class OpenAIModel(enum.Enum):
     # Completion Model
+    GPT_52 = "gpt-5.2"
     O1_PREVIEW = "o1-preview"
     O1_MINI = "o1-mini"
     GPT_4O = "gpt-4o"

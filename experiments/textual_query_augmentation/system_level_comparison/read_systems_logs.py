@@ -266,8 +266,8 @@ def combine_all_data(
 
 
 if __name__ == "__main__":
-    ROOT_DIR = "data/augmentation/jqe/BIRD_org/"
-    data_mode = ""
+    ROOT_DIR = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/"
+    data_mode = "original_nl_new_sql_results"
     chess_directory = ROOT_DIR + "chess/" + data_mode
     din_sql_directory = ROOT_DIR + "din-sql/" + data_mode
     mac_sql_directory = ROOT_DIR + "mac-sql/" + data_mode

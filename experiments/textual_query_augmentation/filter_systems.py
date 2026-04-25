@@ -251,8 +251,8 @@ if __name__ == "__main__":
 
     # File paths
     systems_csv_path = "data/metrics/experiments/system_level_comparison/systems_data_with_metrics-with_penalty.csv"
-    sql_nl_csv_path = "data/augmentation/snail/new_sql_nl_queries.csv"
-    output_dir = "data/augmentation/snail/experiments"  # Base output directory
+    sql_nl_csv_path = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/experiments_dev_new_sql_nl_queries_fixed.csv"
+    output_dir = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed"  # Base output directory
 
     print("Reading systems data...")
     systems_df = read_systems_data(systems_csv_path)

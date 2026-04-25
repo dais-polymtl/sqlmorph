@@ -134,15 +134,17 @@ def join_data_with_golden(
 
 if __name__ == "__main__":
     # Define file paths
-    csv_path = Path("data/augmentation/decrease_naturalness/new_sql_nl_queries.csv")
+    csv_path = Path(
+        "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/experiments_dev_new_sql_nl_queries_fixed.csv"
+    )
     json_path = Path(
-        "data/augmentation/decrease_naturalness/schema_linking/golden_sql_parsed.json"
+        "data/augmentation/decrease_naturalness/schema_linking_dev/dev_golden_sql_parsed.json"
     )
     mapping_csv_path = Path(
-        "data/augmentation/decrease_naturalness/databases_naturalness_decreased.csv"
+        "data/augmentation/decrease_naturalness/databases_naturalness_decreased_fixed.csv"
     )
     output_path = Path(
-        "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_queries_with_golden_schema.csv"
+        "data/augmentation/decrease_naturalness/schema_linking_dev_sql_failed/new_sql_nl_schema_queries.csv"
     )
 
     join_data_with_golden(csv_path, json_path, mapping_csv_path, output_path)

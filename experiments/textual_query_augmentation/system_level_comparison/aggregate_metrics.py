@@ -495,8 +495,8 @@ def create_individual_failure_box_plots(input_path, plots_dir, techniques, plot_
 
 if __name__ == "__main__":
     # CONFIGURABLE PARAMETERS
-    TAG = "without_penalty"
-    ROOT = "data/augmentation/jqe/BIRD_org/"
+    TAG = "ex_new_nl_original_sql_results"
+    ROOT = "data/augmentation/decrease_naturalness/experiments_dev_all/"
     INPUT_PATH = f"{ROOT}/{TAG}.csv"
     OUTPUT_PATH = f"{ROOT}/system_metrics_avg_report-{TAG}.csv"
 
@@ -513,8 +513,8 @@ if __name__ == "__main__":
         "EXECUTION_ACCURACY",
         # "EXACT_COLUMN_AND_EXACT_CELL",
         # "EXACT_COLUMN_AND_PARTIAL_CELL",
-        "SEMANTIC_COLUMN_AND_EXACT_CELL",
-        "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
+        # "SEMANTIC_COLUMN_AND_EXACT_CELL",
+        # "SEMANTIC_COLUMN_AND_PARTIAL_CELL",
         # "NO_COLUMN_AND_PARTIAL_CELL",
         # "UNIFIED_COLUMN_AND_SEMANTIC_ROW",
     ]

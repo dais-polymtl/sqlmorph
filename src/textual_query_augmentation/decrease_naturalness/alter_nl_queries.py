@@ -166,7 +166,7 @@ def generate_less_natural_nl(
     """
     # Initialize prompt renderer
     prompt_renderer = PromptRenderer(
-        templates_dir_path="src/augmentation/snail/prompts_templates/"
+        templates_dir_path="src/textual_query_augmentation/decrease_naturalness/prompts_templates/"
     )
 
     # Initialize LLM
@@ -424,9 +424,11 @@ def print_nl_processing_summary(stats):
 
 if __name__ == "__main__":
     # Configuration
-    queries_csv_path = "data/augmentation/snail/new_sql_queries.csv"
-    mapping_csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
-    output_csv_path = "data/augmentation/snail/new_sql_nl_queries.csv"
+    queries_csv_path = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/new_sql_queries.csv"
+    mapping_csv_path = "data/augmentation/decrease_naturalness/databases_naturalness_decreased_fixed.csv"
+    output_csv_path = (
+        "data/augmentation/decrease_naturalness/experiments_dev/new_sql_nl_queries.csv"
+    )
 
     # Model configuration
     model_name = OpenAIModel.GPT_4O  # Model to use for generation
