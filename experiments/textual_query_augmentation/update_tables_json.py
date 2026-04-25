@@ -211,9 +211,9 @@ def print_update_summary(stats):
 
 if __name__ == "__main__":
     # Configuration
-    csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
+    csv_path = "data/augmentation/decrease_naturalness/databases_naturalness_decreased_fixed.csv"
     json_input_path = "data/benchmarks/Bird/minidev/MINIDEV/dev_tables.json"
-    json_output_path = "data/augmentation/snail/new_dev_tables.json"
+    json_output_path = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/new_dev_databases/new_dev_tables.json"
 
     print("Updating tables JSON file...")
     print(f"Input CSV: {csv_path}")

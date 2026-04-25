@@ -68,6 +68,7 @@ def read_name_mapping(mapping_csv_path):
 def replace_sql_names(sql_query, table_mappings, column_mappings):
     """
     Replace table and column names in SQL query with new names.
+    Preserves string literals to prevent corruption of values.
 
     Args:
         sql_query (str): Original SQL query
@@ -77,86 +78,74 @@ def replace_sql_names(sql_query, table_mappings, column_mappings):
     Returns:
         str: Updated SQL query with new names
     """
-    updated_sql = sql_query
+    # Step 1: Extract and protect string literals
+    string_literals = []
+    placeholder_template = "___STRING_LITERAL_{}____"
 
-    # Replace table names
+    def extract_string_literal(match):
+        """Extract string literal and replace with placeholder."""
+        literal = match.group(0)
+        index = len(string_literals)
+        string_literals.append(literal)
+        return placeholder_template.format(index)
+
+    # Match single-quoted and double-quoted strings
+    # This regex handles escaped quotes within strings
+    string_pattern = r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\""
+    protected_sql = re.sub(string_pattern, extract_string_literal, sql_query)
+
+    # Step 2: Replace table names (on protected SQL)
+    updated_sql = protected_sql
+
     for old_table, new_table in table_mappings.items():
         # Use word boundaries and case-insensitive matching
         # Handle both quoted and unquoted table names
         patterns = [
             rf"\b{re.escape(old_table)}\b",  # Unquoted table name
             rf"`{re.escape(old_table)}`",  # Backtick quoted
-            rf'"{re.escape(old_table)}"',  # Double quoted
-            rf"'{re.escape(old_table)}'",  # Single quoted
         ]
 
         replacements = [
             new_table,  # Unquoted replacement
             f"`{new_table}`",  # Backtick quoted replacement
-            f'"{new_table}"',  # Double quoted replacement
-            f"'{new_table}'",  # Single quoted replacement
         ]
 
         for pattern, replacement in zip(patterns, replacements):
             updated_sql = re.sub(pattern, replacement, updated_sql, flags=re.IGNORECASE)
 
-    # Replace column names - but avoid aggregation functions and ORDER BY
+    # Step 3: Replace column names (on protected SQL)
     for old_column, new_column in column_mappings.items():
-        # Define common SQL aggregation functions
-        agg_functions = [
-            "count",
-            "sum",
-            "avg",
-            "min",
-            "max",
-            "group_concat",
-            "total",
-            "abs",
-            "upper",
-            "lower",
-            "length",
-            "substr",
-            "trim",
-            "round",
-            "cast",
-            "coalesce",
-            "ifnull",
-            "nullif",
-        ]
-
-        # Check if the column name is an aggregation function
-        if old_column.lower() in agg_functions:
-            # Skip replacement for aggregation functions
-            continue
-
-        # Special handling for 'order' - don't replace if followed by 'by'
+        # Special handling for 'order' - don't replace if followed by whitespace and 'by'
         if old_column.lower() == "order":
-            # Don't replace 'order' if it's part of 'ORDER BY'
-            # Use a more specific pattern that excludes 'ORDER BY'
+            # Don't replace 'order' if it's part of 'ORDER BY' (with at least one space)
+            # Use negative lookahead to prevent replacing when followed by space(s) and 'by'/'BY'
+            # The (?i:by) makes 'by' case-insensitive within the lookahead
             patterns = [
-                rf"\b{re.escape(old_column)}\b(?!\s*by)(?!\s*\()",  # Not followed by 'by' or '('
-                rf"`{re.escape(old_column)}`(?!\s*by)(?!\s*\()",  # Backtick quoted, not followed by 'by' or '('
-                rf'"{re.escape(old_column)}"(?!\s*by)(?!\s*\()',  # Double quoted, not followed by 'by' or '('
-                rf"'{re.escape(old_column)}'",  # Single quoted (less common for columns)
+                rf"\b{re.escape(old_column)}\b(?!\s+(?i:by))(?!\s*\()",  # Not followed by space(s) and 'by'/'BY', or directly by '('
+                rf"`{re.escape(old_column)}`(?!\s+(?i:by))(?!\s*\()",  # Backtick quoted
             ]
         else:
             # Handle both quoted and unquoted column names
+            # The (?!\s*\() prevents matching when column name is directly followed by '('
+            # This prevents replacing function calls (e.g., COUNT(...), ROUND(...))
+            # but allows replacing column names (e.g., WHERE Count <= 20, COUNT(round))
             patterns = [
-                rf"\b{re.escape(old_column)}\b(?!\s*\()",  # Unquoted, not followed by (
-                rf"`{re.escape(old_column)}`(?!\s*\()",  # Backtick quoted, not followed by (
-                rf'"{re.escape(old_column)}"(?!\s*\()',  # Double quoted, not followed by (
-                rf"'{re.escape(old_column)}'",  # Single quoted (less common for columns)
+                rf"\b{re.escape(old_column)}\b(?!\s*\()",  # Unquoted, not directly followed by '('
+                rf"`{re.escape(old_column)}`(?!\s*\()",  # Backtick quoted, not directly followed by '('
             ]
 
         replacements = [
             new_column,  # Unquoted replacement
             f"`{new_column}`",  # Backtick quoted replacement
-            f'"{new_column}"',  # Double quoted replacement
-            f"'{new_column}'",  # Single quoted replacement
         ]
 
         for pattern, replacement in zip(patterns, replacements):
             updated_sql = re.sub(pattern, replacement, updated_sql, flags=re.IGNORECASE)
+
+    # Step 4: Restore string literals
+    for index, literal in enumerate(string_literals):
+        placeholder = placeholder_template.format(index)
+        updated_sql = updated_sql.replace(placeholder, literal)
 
     return updated_sql
 
@@ -526,14 +515,14 @@ def print_summary(stats):
 
 if __name__ == "__main__":
     # Configuration
-    queries_json_path = "data/benchmarks/Bird/minidev/MINIDEV/mini_dev_sqlite.json"
-    mapping_csv_path = "data/augmentation/snail/databases_naturalness_decreased.csv"
-    results_csv_path = "data/augmentation/snail/new_sql_queries.csv"
+    queries_json_path = "data/benchmarks/Bird/bird_dev.json"
+    mapping_csv_path = "data/augmentation/decrease_naturalness/databases_naturalness_decreased_fixed.csv"
+    results_csv_path = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/new_sql_queries.csv"
 
     # EX validation configuration
-    original_db_root = "data/benchmarks/Bird/minidev/MINIDEV/dev_databases"
-    new_db_root = "data/augmentation/snail/new_dev_databases"
-    timeout_seconds = 30  # Timeout for each query evaluation
+    original_db_root = "data/benchmarks/Bird/dev_databases"
+    new_db_root = "data/augmentation/decrease_naturalness/experiment_dev_sql_failed/new_dev_databases"
+    timeout_seconds = 45  # Timeout for each query evaluation
 
     # List of database IDs to process
     target_db_ids = [

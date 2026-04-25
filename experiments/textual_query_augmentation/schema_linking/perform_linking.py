@@ -236,10 +236,10 @@ def perform_schema_linking(
 if __name__ == "__main__":
     # Define file paths
     input_csv_path = Path(
-        "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_schema_queries.csv"
+        "data/augmentation/decrease_naturalness/schema_linking_dev_sql_failed/new_sql_nl_schema_queries.csv"
     )
     output_csv_path = Path(
-        "data/augmentation/decrease_naturalness/schema_linking/new_sql_nl_schema_queries_with_schema_linking.csv"
+        "data/augmentation/decrease_naturalness/schema_linking_dev_sql_failed/new_sql_nl_schema_queries_with_schema_linking.csv"
     )
 
     # Original and new database configurations
@@ -251,8 +251,8 @@ if __name__ == "__main__":
 
     new_config = {
         "dbms": "sqlite",
-        "tables_file_path": "data/augmentation/decrease_naturalness/new_dev_databases/new_dev_tables.json",
-        "db_dir_path": "data/augmentation/decrease_naturalness/new_dev_databases/",
+        "tables_file_path": "data/augmentation/decrease_naturalness/experiments_dev_sql_failed/new_dev_databases/new_dev_tables.json",
+        "db_dir_path": "data/augmentation/decrease_naturalness/experiments_dev_sql_failed/new_dev_databases/",
     }
 
     perform_schema_linking(input_csv_path, output_csv_path, original_config, new_config)

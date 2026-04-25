@@ -393,7 +393,7 @@ class SchemaReader:
         Extract relevant tables.
         """
         prompt_renderer = PromptRenderer(
-            templates_dir_path="./src/experiments/augmentation/decrease_naturalness/schema_linking/prompt_templates/"
+            templates_dir_path="experiments/textual_query_augmentation/schema_linking/prompt_templates/"
         )
 
         full_schema, _ = self.get_full_schema_representation()
@@ -436,7 +436,7 @@ class SchemaReader:
         Extract relevant columns.
         """
         prompt_renderer = PromptRenderer(
-            templates_dir_path="./src/experiments/augmentation/decrease_naturalness/schema_linking/prompt_templates/"
+            templates_dir_path="experiments/textual_query_augmentation/schema_linking/prompt_templates/"
         )
         context = {
             "user_question": user_question,
@@ -521,7 +521,7 @@ class SchemaReader:
         Model-determined column-wise relevance where each column is assessed independently.
         """
         prompt_renderer = PromptRenderer(
-            templates_dir_path="./src/experiments/augmentation/decrease_naturalness/schema_linking/prompt_templates/"
+            templates_dir_path="experiments/textual_query_augmentation/schema_linking/prompt_templates/"
         )
 
         llm = ModelManager.create_model(
